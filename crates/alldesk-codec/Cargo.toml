@@ -1,0 +1,13 @@
+[package]
+name = "alldesk-codec"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alldesk-core = { path = "../alldesk-core" }
+alldesk-capture = { path = "../alldesk-capture" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+libvpx-native-sys = { workspace = true }

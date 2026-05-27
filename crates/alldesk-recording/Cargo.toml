@@ -1,0 +1,11 @@
+[package]
+name = "alldesk-recording"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alldesk-core = { path = "../alldesk-core" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

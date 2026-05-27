@@ -1,0 +1,63 @@
+name: alldesk
+description: Cross-platform LAN remote desktop control application
+version: 0.1.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.0
+  riverpod_annotation: ^2.3.0
+
+  # Navigation
+  go_router: ^14.0.0
+
+  # UI
+  window_manager: ^0.4.0
+  flutter_screenutil: ^5.9.0
+  google_fonts: ^6.2.0
+
+  # Utilities
+  uuid: ^4.4.0
+  shared_preferences: ^2.2.0
+  path_provider: ^2.1.0
+  permission_handler: ^11.3.0
+
+  # Rust bridge (generated code will be in lib/src/rust/)
+  # After running flutter_rust_bridge_codegen integrate:
+  # alldesk_ffi: any
+
+  flutter_rust_bridge: 2.12.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  riverpod_generator: ^2.4.0
+  build_runner: ^2.4.0
+  flutter_launcher_icons: ^0.14.4
+
+# Flutter Rust Bridge configuration
+# Run: flutter_rust_bridge_codegen generate
+flutter_rust_bridge:
+  rust_input: crate::api
+  rust_root: ../crates/alldesk-ffi/
+  dart_output: lib/src/rust
+
+flutter_launcher_icons:
+  android: true
+  windows:
+    generate: true
+    image_path: "../assets/icons/icon_1024.png"
+    icon_size: 48
+  image_path: "../assets/icons/icon_1024.png"
+  adaptive_icon_background: "#134EC3"
+  adaptive_icon_foreground: "../assets/icons/icon_1024.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/

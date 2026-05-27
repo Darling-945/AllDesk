@@ -1,0 +1,14 @@
+[package]
+name = "alldesk-files"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alldesk-core = { path = "../alldesk-core" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

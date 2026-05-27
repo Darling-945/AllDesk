@@ -1,0 +1,11 @@
+[package]
+name = "alldesk-audio"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alldesk-core = { path = "../alldesk-core" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+cpal = { workspace = true }

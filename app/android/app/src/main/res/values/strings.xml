@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">AllDesk remote control needs accessibility permission to inject mouse and keyboard events on this device.</string>
+</resources>

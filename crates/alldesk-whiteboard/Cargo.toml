@@ -1,0 +1,13 @@
+[package]
+name = "alldesk-whiteboard"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alldesk-core = { path = "../alldesk-core" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

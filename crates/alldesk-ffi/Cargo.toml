@@ -1,0 +1,30 @@
+[package]
+name = "alldesk-ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "alldesk_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+alldesk-core = { path = "../alldesk-core" }
+alldesk-capture = { path = "../alldesk-capture" }
+alldesk-codec = { path = "../alldesk-codec" }
+alldesk-audio = { path = "../alldesk-audio" }
+alldesk-input = { path = "../alldesk-input" }
+alldesk-clipboard = { path = "../alldesk-clipboard" }
+alldesk-net = { path = "../alldesk-net" }
+quinn = { workspace = true }
+alldesk-files = { path = "../alldesk-files" }
+alldesk-recording = { path = "../alldesk-recording" }
+alldesk-whiteboard = { path = "../alldesk-whiteboard" }
+flutter_rust_bridge = "=2.12.0"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+hostname = { workspace = true }

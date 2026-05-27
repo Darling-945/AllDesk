@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/alldesk-core",
+    "crates/alldesk-capture",
+    "crates/alldesk-codec",
+    "crates/alldesk-audio",
+    "crates/alldesk-input",
+    "crates/alldesk-clipboard",
+    "crates/alldesk-net",
+    "crates/alldesk-files",
+    "crates/alldesk-recording",
+    "crates/alldesk-whiteboard",
+    "crates/alldesk-ffi",
+    "server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+prost = "0.13"
+prost-types = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bytes = { version = "1", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+cfg-if = "1"
+async-trait = "0.1"
+futures = "0.3"
+quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
+cpal = "0.17"
+libvpx-native-sys = "5"
+arboard = "3.4"
+hostname = "0.4"
+flutter_rust_bridge = "2"
