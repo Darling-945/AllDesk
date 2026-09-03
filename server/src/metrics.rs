@@ -10,7 +10,11 @@ const DEFAULT_METRICS_PORT: u16 = 21121;
 /// Starts an HTTP server on the given port that serves `/metrics` for Prometheus
 /// scraping. Also installs a global metrics recorder.
 pub fn init_metrics(port: u16) -> anyhow::Result<()> {
-    let port = if port == 0 { DEFAULT_METRICS_PORT } else { port };
+    let port = if port == 0 {
+        DEFAULT_METRICS_PORT
+    } else {
+        port
+    };
 
     PrometheusBuilder::new()
         .with_http_listener(([0, 0, 0, 0], port))
@@ -85,14 +89,21 @@ mod tests {
 
         let snap = snapshotter.snapshot();
         let entries = snap.into_vec();
-        let ws_entry = entries.iter().find(|(k, _, _, _)| {
-            k.key().name() == "alldesk_ws_connections_total"
-        });
+        let ws_entry = entries
+            .iter()
+            .find(|(k, _, _, _)| k.key().name() == "alldesk_ws_connections_total");
 
-        assert!(ws_entry.is_some(), "ws_connections counter should have been recorded");
+        assert!(
+            ws_entry.is_some(),
+            "ws_connections counter should have been recorded"
+        );
 
         if let Some((_, _, _, metrics_util::debugging::DebugValue::Counter(val))) = ws_entry {
-            assert!(*val >= 1, "counter should have been incremented at least once, got {}", val);
+            assert!(
+                *val >= 1,
+                "counter should have been incremented at least once, got {}",
+                val
+            );
         }
     }
 
@@ -103,9 +114,10 @@ mod tests {
         record_stun_request();
 
         let snap = snapshotter.snapshot();
-        let found = snap.into_vec().iter().any(|(k, _, _, _)| {
-            k.key().name() == "alldesk_stun_requests_total"
-        });
+        let found = snap
+            .into_vec()
+            .iter()
+            .any(|(k, _, _, _)| k.key().name() == "alldesk_stun_requests_total");
         assert!(found, "STUN request counter should have been recorded");
     }
 
@@ -117,11 +129,14 @@ mod tests {
 
         let snap = snapshotter.snapshot();
         let entries = snap.into_vec();
-        let gauge_entry = entries.into_iter().find(|(k, _, _, _)| {
-            k.key().name() == "alldesk_active_peers"
-        });
+        let gauge_entry = entries
+            .into_iter()
+            .find(|(k, _, _, _)| k.key().name() == "alldesk_active_peers");
 
-        assert!(gauge_entry.is_some(), "active peers gauge should have been recorded");
+        assert!(
+            gauge_entry.is_some(),
+            "active peers gauge should have been recorded"
+        );
 
         if let Some((_, _, _, metrics_util::debugging::DebugValue::Gauge(val))) = gauge_entry {
             assert_eq!(val.0, 42.0, "gauge should be set to 42");

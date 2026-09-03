@@ -47,9 +47,15 @@ mod tests {
 
     #[test]
     fn test_channel_stream_id_roundtrip() {
-        for ch in [Channel::Video, Channel::Audio, Channel::Input,
-                    Channel::Clipboard, Channel::File, Channel::Whiteboard,
-                    Channel::Control] {
+        for ch in [
+            Channel::Video,
+            Channel::Audio,
+            Channel::Input,
+            Channel::Clipboard,
+            Channel::File,
+            Channel::Whiteboard,
+            Channel::Control,
+        ] {
             assert_eq!(Channel::from_stream_id(ch.stream_id()), Some(ch));
         }
     }
@@ -74,10 +80,17 @@ mod tests {
     #[test]
     fn test_channel_stream_ids_unique() {
         let ids: Vec<u64> = [
-            Channel::Video, Channel::Audio, Channel::Input,
-            Channel::Clipboard, Channel::File, Channel::Whiteboard,
+            Channel::Video,
+            Channel::Audio,
+            Channel::Input,
+            Channel::Clipboard,
+            Channel::File,
+            Channel::Whiteboard,
             Channel::Control,
-        ].iter().map(|c| c.stream_id()).collect();
+        ]
+        .iter()
+        .map(|c| c.stream_id())
+        .collect();
         let unique: std::collections::HashSet<u64> = ids.iter().copied().collect();
         assert_eq!(ids.len(), unique.len());
     }

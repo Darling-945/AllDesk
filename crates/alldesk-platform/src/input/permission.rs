@@ -50,7 +50,10 @@ mod tests {
     fn test_grant_allows() {
         let perm = InputPermission::new();
         perm.grant();
-        assert!(perm.is_granted(), "permission should be granted after grant()");
+        assert!(
+            perm.is_granted(),
+            "permission should be granted after grant()"
+        );
     }
 
     #[test]
@@ -58,7 +61,10 @@ mod tests {
         let perm = InputPermission::new();
         perm.grant();
         perm.revoke();
-        assert!(!perm.is_granted(), "permission should be denied after revoke()");
+        assert!(
+            !perm.is_granted(),
+            "permission should be denied after revoke()"
+        );
     }
 
     #[test]

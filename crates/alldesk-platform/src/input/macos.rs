@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use alldesk_core::Error;
 use core_graphics::event::{
-    CGEvent, CGEventType, CGEventTapLocation, CGMouseButton, KeyCode as Vk, ScrollEventUnit,
+    CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, KeyCode as Vk, ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;

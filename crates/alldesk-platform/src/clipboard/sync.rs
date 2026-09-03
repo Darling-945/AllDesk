@@ -1,5 +1,5 @@
-use alldesk_core::{Error, Result};
 use crate::clipboard::ClipboardContent;
+use alldesk_core::{Error, Result};
 
 /// Wire-format tag for the content type.
 const TAG_TEXT: u8 = 0x01;
@@ -42,7 +42,11 @@ impl ClipboardSync {
                 buf.extend_from_slice(text_bytes);
                 buf
             }
-            ClipboardContent::Image { width, height, pixels } => {
+            ClipboardContent::Image {
+                width,
+                height,
+                pixels,
+            } => {
                 let mut buf = Vec::with_capacity(1 + 4 + 8 + pixels.len());
                 buf.push(TAG_IMAGE);
                 // payload = width(4) + height(4) + pixels
@@ -85,24 +89,35 @@ impl ClipboardSync {
             }
             TAG_IMAGE => {
                 if payload.len() < 8 {
-                    return Err(Error::Clipboard("Image payload too short for dimensions".into()));
+                    return Err(Error::Clipboard(
+                        "Image payload too short for dimensions".into(),
+                    ));
                 }
-                let width = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
-                let height = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]) as usize;
+                let width =
+                    u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+                let height =
+                    u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]) as usize;
                 let pixels = payload[8..].to_vec();
 
-                let expected = width.checked_mul(height)
+                let expected = width
+                    .checked_mul(height)
                     .and_then(|sz| sz.checked_mul(4))
                     .ok_or_else(|| Error::Clipboard("Image dimensions overflow".into()))?;
 
                 if pixels.len() != expected {
                     return Err(Error::Clipboard(format!(
                         "Pixel data size mismatch: expected {expected} bytes ({}x{} RGBA), got {}",
-                        width, height, pixels.len()
+                        width,
+                        height,
+                        pixels.len()
                     )));
                 }
 
-                Ok(ClipboardContent::Image { width, height, pixels })
+                Ok(ClipboardContent::Image {
+                    width,
+                    height,
+                    pixels,
+                })
             }
             _ => Err(Error::Clipboard(format!("Unknown content tag: {tag}"))),
         }

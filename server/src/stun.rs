@@ -45,9 +45,13 @@ pub async fn run_stun_server(port: u16, shutdown: Arc<AtomicBool>) -> anyhow::Re
 
     // Bind alternate socket for NAT classification responses (different port).
     let alt_port = port + 1;
-    let alt_socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, alt_port)).await {
+    let alt_socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, alt_port)).await
+    {
         Ok(s) => {
-            info!("STUN NAT detection alternate socket on UDP port {}", alt_port);
+            info!(
+                "STUN NAT detection alternate socket on UDP port {}",
+                alt_port
+            );
             Some(Arc::new(s))
         }
         Err(e) => {
@@ -347,14 +351,14 @@ mod tests {
     #[test]
     fn test_build_binding_response() {
         let transaction_id = [0x42u8; 12];
-        let addr = SocketAddr::new(
-            std::net::IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)),
-            12345,
-        );
+        let addr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)), 12345);
 
         let response = build_binding_response(&transaction_id, addr).unwrap();
         // Check message type is Binding Response
-        assert_eq!(u16::from_be_bytes([response[0], response[1]]), STUN_BINDING_RESPONSE);
+        assert_eq!(
+            u16::from_be_bytes([response[0], response[1]]),
+            STUN_BINDING_RESPONSE
+        );
         // Check magic cookie
         assert_eq!(
             u32::from_be_bytes([response[4], response[5], response[6], response[7]]),
@@ -366,20 +370,11 @@ mod tests {
 
     #[test]
     fn test_nat_type_detection() {
-        let local = SocketAddr::new(
-            std::net::IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
-            12345,
-        );
-        let public = SocketAddr::new(
-            std::net::IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)),
-            12345,
-        );
+        let local = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), 12345);
+        let public = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)), 12345);
 
         // Same address = public
-        assert_eq!(
-            detect_nat_type(local, local, true, true),
-            NatType::Public
-        );
+        assert_eq!(detect_nat_type(local, local, true, true), NatType::Public);
 
         // Symmetric NAT
         assert_eq!(
@@ -432,7 +427,10 @@ mod tests {
         );
 
         let response = build_binding_response(&transaction_id, addr).unwrap();
-        assert_eq!(u16::from_be_bytes([response[0], response[1]]), STUN_BINDING_RESPONSE);
+        assert_eq!(
+            u16::from_be_bytes([response[0], response[1]]),
+            STUN_BINDING_RESPONSE
+        );
         assert_eq!(
             u32::from_be_bytes([response[4], response[5], response[6], response[7]]),
             STUN_MAGIC_COOKIE

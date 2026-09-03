@@ -146,7 +146,7 @@ impl BandwidthEstimator {
 
         // Normalize slope to [0, 1] range
         // Positive slope = increasing delay = congestion
-        
+
         (slope / 1000.0 + 0.5).clamp(0.0, 1.0)
     }
 
@@ -183,8 +183,7 @@ impl BandwidthEstimator {
                 // Additive increase
                 if self.normal_count >= 5 {
                     let increase = (self.estimate_kbps as f64 * 0.05) as u32;
-                    self.estimate_kbps =
-                        (self.estimate_kbps + increase.max(50)).min(self.max_kbps);
+                    self.estimate_kbps = (self.estimate_kbps + increase.max(50)).min(self.max_kbps);
                     self.normal_count = 0;
                 }
             }

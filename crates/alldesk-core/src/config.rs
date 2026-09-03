@@ -73,7 +73,10 @@ fn hostname() -> std::result::Result<String, std::io::Error> {
             }
             #[cfg(not(any(unix, windows)))]
             {
-                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no hostname"))
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "no hostname",
+                ))
             }
         })
         .unwrap_or_else(|_| "Unknown".into()))

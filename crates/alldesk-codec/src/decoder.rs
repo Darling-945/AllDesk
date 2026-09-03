@@ -1,5 +1,5 @@
-use alldesk_core::Result;
 use super::encoder::EncodedPacket;
+use alldesk_core::Result;
 
 pub struct DecodedFrame {
     pub data: Vec<u8>,

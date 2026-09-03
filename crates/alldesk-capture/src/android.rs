@@ -6,7 +6,9 @@ use alldesk_core::Result;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::capture::{CaptureConfig, CaptureProvider, CapturedFrame, FrameData, MonitorInfo, PixelFormat};
+use crate::capture::{
+    CaptureConfig, CaptureProvider, CapturedFrame, FrameData, MonitorInfo, PixelFormat,
+};
 
 /// Shared frame buffer between Flutter/JNI and the Rust capture loop.
 ///
@@ -154,8 +156,16 @@ pub fn get_android_frame_stats() -> (u64, u64) {
 impl CaptureProvider for AndroidCapturer {
     async fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
         let frame = self.frame.lock().await;
-        let w = if frame.widths[0] > 0 { frame.widths[0] } else { 1080 };
-        let h = if frame.heights[0] > 0 { frame.heights[0] } else { 1920 };
+        let w = if frame.widths[0] > 0 {
+            frame.widths[0]
+        } else {
+            1080
+        };
+        let h = if frame.heights[0] > 0 {
+            frame.heights[0]
+        } else {
+            1920
+        };
         Ok(vec![MonitorInfo {
             id: 0,
             name: "Android Screen".into(),

@@ -196,7 +196,6 @@ impl FlowController {
             stats[idx].msgs_recv += 1;
         }
     }
-
 }
 
 /// Drop expired messages from a buffer.

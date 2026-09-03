@@ -123,7 +123,10 @@ fn write_uint_element(writer: &mut impl Write, id: u32, value: u64) -> std::io::
         vec![0u8]
     } else {
         let len = (64 - value.leading_zeros()).div_ceil(8);
-        (0..len).rev().map(|i| (value >> (i * 8)) as u8).collect::<Vec<_>>()
+        (0..len)
+            .rev()
+            .map(|i| (value >> (i * 8)) as u8)
+            .collect::<Vec<_>>()
     };
     write_element(writer, id, &bytes)
 }
@@ -548,7 +551,11 @@ mod tests {
         let simple_block_id = &[0xA3];
         let count = data.windows(1).filter(|w| w == simple_block_id).count();
         // We wrote 4 frames, should find at least 4 SimpleBlock IDs.
-        assert!(count >= 4, "Expected at least 4 SimpleBlock elements, found {}", count);
+        assert!(
+            count >= 4,
+            "Expected at least 4 SimpleBlock elements, found {}",
+            count
+        );
 
         let _ = std::fs::remove_file(&path);
     }
@@ -609,7 +616,11 @@ mod tests {
         muxer.write_frame(&delta, 5066, false).unwrap();
 
         let frame_count = muxer.frame_count();
-        assert!(frame_count > 150, "Expected >150 frames, got {}", frame_count);
+        assert!(
+            frame_count > 150,
+            "Expected >150 frames, got {}",
+            frame_count
+        );
 
         muxer.finish().unwrap();
 

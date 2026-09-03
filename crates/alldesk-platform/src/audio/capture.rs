@@ -93,14 +93,12 @@ impl AudioCapturer {
             .or_else(|| {
                 // Last resort: try any supported config with any sample format.
                 tracing::warn!("No f32 config available, trying any supported config");
-                supported
-                    .clone().find(|c| c.channels() >= 1)
-                    .map(|c| {
-                        let rate = c.min_sample_rate();
-                        let mut cfg: StreamConfig = c.with_sample_rate(rate).config();
-                        cfg.channels = 1;
-                        cfg
-                    })
+                supported.clone().find(|c| c.channels() >= 1).map(|c| {
+                    let rate = c.min_sample_rate();
+                    let mut cfg: StreamConfig = c.with_sample_rate(rate).config();
+                    cfg.channels = 1;
+                    cfg
+                })
             });
 
         let use_config = match use_config {

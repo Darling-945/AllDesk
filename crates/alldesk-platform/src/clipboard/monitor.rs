@@ -1,6 +1,6 @@
 use alldesk_core::{Error, Result};
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Clipboard content types supported for sync between peers.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,7 +23,11 @@ impl ClipboardContent {
                 0u8.hash(&mut hasher);
                 s.hash(&mut hasher);
             }
-            ClipboardContent::Image { width, height, pixels } => {
+            ClipboardContent::Image {
+                width,
+                height,
+                pixels,
+            } => {
                 1u8.hash(&mut hasher);
                 width.hash(&mut hasher);
                 height.hash(&mut hasher);
@@ -107,16 +111,22 @@ impl ClipboardMonitor {
     pub fn set_content(&mut self, content: &ClipboardContent) -> Result<()> {
         match content {
             ClipboardContent::Text(text) => {
-                self.clipboard.set_text(text)
+                self.clipboard
+                    .set_text(text)
                     .map_err(|e| Error::Clipboard(format!("Failed to set text: {e}")))?;
             }
-            ClipboardContent::Image { width, height, pixels } => {
+            ClipboardContent::Image {
+                width,
+                height,
+                pixels,
+            } => {
                 let image_data = arboard::ImageData {
                     width: *width,
                     height: *height,
                     bytes: std::borrow::Cow::Borrowed(pixels.as_slice()),
                 };
-                self.clipboard.set_image(image_data)
+                self.clipboard
+                    .set_image(image_data)
                     .map_err(|e| Error::Clipboard(format!("Failed to set image: {e}")))?;
             }
         }
@@ -142,7 +152,9 @@ impl ClipboardMonitor {
             });
         }
 
-        Err(Error::Clipboard("Clipboard is empty or holds unsupported content".into()))
+        Err(Error::Clipboard(
+            "Clipboard is empty or holds unsupported content".into(),
+        ))
     }
 }
 

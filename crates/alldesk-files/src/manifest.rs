@@ -111,12 +111,10 @@ impl FileManifest {
         }
 
         // Sort children: directories first, then alphabetically.
-        children.sort_by(|a, b| {
-            match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            }
+        children.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
 
         Ok(Self {
@@ -158,7 +156,9 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("alldesk_test_manifest").join(name);
+        let dir = std::env::temp_dir()
+            .join("alldesk_test_manifest")
+            .join(name);
         let _ = std::fs::create_dir_all(&dir);
         dir
     }

@@ -19,8 +19,8 @@ use std::sync::Mutex;
 use alldesk_core::Result;
 
 use crate::input::controller::{
-    ButtonState, DisplayRect, InputController, KeyCode, KeyState, MouseButton,
-    TouchEvent, TouchPoint,
+    ButtonState, DisplayRect, InputController, KeyCode, KeyState, MouseButton, TouchEvent,
+    TouchPoint,
 };
 
 /// Commands that the Kotlin AccessibilityService can execute.
@@ -34,7 +34,10 @@ pub enum InputCommand {
     /// Move pointer to absolute (x, y) position.
     MouseMove { x: i32, y: i32 },
     /// Click or release a mouse button.
-    MouseClick { button: MouseButton, state: ButtonState },
+    MouseClick {
+        button: MouseButton,
+        state: ButtonState,
+    },
     /// Scroll by (delta_x, delta_y) units.
     MouseScroll { delta_x: i32, delta_y: i32 },
     /// Press or release a key.
@@ -234,8 +237,10 @@ mod tests {
 
         // Buffer several events
         ctrl.mouse_move(100, 200, false).unwrap();
-        ctrl.mouse_click(MouseButton::Left, ButtonState::Pressed).unwrap();
-        ctrl.mouse_click(MouseButton::Left, ButtonState::Released).unwrap();
+        ctrl.mouse_click(MouseButton::Left, ButtonState::Pressed)
+            .unwrap();
+        ctrl.mouse_click(MouseButton::Left, ButtonState::Released)
+            .unwrap();
 
         assert_eq!(ctrl.pending_count(), 3);
 
@@ -257,7 +262,13 @@ mod tests {
         assert_eq!(cmds.len(), 3);
 
         assert!(matches!(cmds[0], InputCommand::MouseMove { x: 50, y: 75 }));
-        assert!(matches!(cmds[1], InputCommand::Key { key: KeyCode::Enter, state: KeyState::Pressed }));
+        assert!(matches!(
+            cmds[1],
+            InputCommand::Key {
+                key: KeyCode::Enter,
+                state: KeyState::Pressed
+            }
+        ));
         assert!(matches!(cmds[2], InputCommand::UnicodeChar { ch: 'A' }));
     }
 
@@ -284,17 +295,25 @@ mod tests {
 
         // Mouse events
         ctrl.mouse_move(10, 20, false).unwrap();
-        ctrl.mouse_click(MouseButton::Right, ButtonState::Pressed).unwrap();
+        ctrl.mouse_click(MouseButton::Right, ButtonState::Pressed)
+            .unwrap();
         ctrl.mouse_scroll(-1, 5).unwrap();
 
         // Key events
-        ctrl.key_event(KeyCode::Char('a'), KeyState::Pressed).unwrap();
-        ctrl.key_event(KeyCode::Function(1), KeyState::Released).unwrap();
+        ctrl.key_event(KeyCode::Char('a'), KeyState::Pressed)
+            .unwrap();
+        ctrl.key_event(KeyCode::Function(1), KeyState::Released)
+            .unwrap();
         ctrl.unicode_char('\u{4e2d}').unwrap();
 
         // Touch events
         let touch = TouchEvent::Down {
-            points: vec![TouchPoint { id: 0, x: 100.0, y: 200.0, pressure: 1.0 }],
+            points: vec![TouchPoint {
+                id: 0,
+                x: 100.0,
+                y: 200.0,
+                pressure: 1.0,
+            }],
         };
         ctrl.touch_event(touch).unwrap();
 
@@ -303,11 +322,38 @@ mod tests {
 
         // Verify each type
         assert!(matches!(&cmds[0], InputCommand::MouseMove { x: 10, y: 20 }));
-        assert!(matches!(&cmds[1], InputCommand::MouseClick { button: MouseButton::Right, state: ButtonState::Pressed }));
-        assert!(matches!(&cmds[2], InputCommand::MouseScroll { delta_x: -1, delta_y: 5 }));
-        assert!(matches!(&cmds[3], InputCommand::Key { key: KeyCode::Char('a'), state: KeyState::Pressed }));
-        assert!(matches!(&cmds[4], InputCommand::Key { key: KeyCode::Function(1), state: KeyState::Released }));
-        assert!(matches!(&cmds[5], InputCommand::UnicodeChar { ch: '\u{4e2d}' }));
+        assert!(matches!(
+            &cmds[1],
+            InputCommand::MouseClick {
+                button: MouseButton::Right,
+                state: ButtonState::Pressed
+            }
+        ));
+        assert!(matches!(
+            &cmds[2],
+            InputCommand::MouseScroll {
+                delta_x: -1,
+                delta_y: 5
+            }
+        ));
+        assert!(matches!(
+            &cmds[3],
+            InputCommand::Key {
+                key: KeyCode::Char('a'),
+                state: KeyState::Pressed
+            }
+        ));
+        assert!(matches!(
+            &cmds[4],
+            InputCommand::Key {
+                key: KeyCode::Function(1),
+                state: KeyState::Released
+            }
+        ));
+        assert!(matches!(
+            &cmds[5],
+            InputCommand::UnicodeChar { ch: '\u{4e2d}' }
+        ));
         assert!(matches!(&cmds[6], InputCommand::Touch { .. }));
     }
 
@@ -336,21 +382,41 @@ mod tests {
         // Touch down
         let down = TouchEvent::Down {
             points: vec![
-                TouchPoint { id: 0, x: 100.0, y: 200.0, pressure: 0.8 },
-                TouchPoint { id: 1, x: 300.0, y: 400.0, pressure: 0.6 },
+                TouchPoint {
+                    id: 0,
+                    x: 100.0,
+                    y: 200.0,
+                    pressure: 0.8,
+                },
+                TouchPoint {
+                    id: 1,
+                    x: 300.0,
+                    y: 400.0,
+                    pressure: 0.6,
+                },
             ],
         };
         ctrl.touch_event(down).unwrap();
 
         // Touch move
         let mv = TouchEvent::Move {
-            points: vec![TouchPoint { id: 0, x: 110.0, y: 210.0, pressure: 0.8 }],
+            points: vec![TouchPoint {
+                id: 0,
+                x: 110.0,
+                y: 210.0,
+                pressure: 0.8,
+            }],
         };
         ctrl.touch_event(mv).unwrap();
 
         // Touch up
         let up = TouchEvent::Up {
-            points: vec![TouchPoint { id: 0, x: 110.0, y: 210.0, pressure: 0.0 }],
+            points: vec![TouchPoint {
+                id: 0,
+                x: 110.0,
+                y: 210.0,
+                pressure: 0.0,
+            }],
         };
         ctrl.touch_event(up).unwrap();
 

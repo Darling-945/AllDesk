@@ -3,20 +3,21 @@
 use alldesk_core::Error;
 use tracing::{instrument, warn};
 
-use crate::input::controller::{
-    ButtonState, InputController, KeyCode, KeyState, MouseButton,
-};
+use crate::input::controller::{ButtonState, InputController, KeyCode, KeyState, MouseButton};
 
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, KEYBDINPUT, MOUSE_EVENT_FLAGS, MOUSEINPUT,
-    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
+    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
-    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL,
-    VIRTUAL_KEY, VK_BACK, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_PACKET, VK_RETURN,
-    VK_RIGHT, VK_TAB, VK_UP, KEYBD_EVENT_FLAGS, INPUT_TYPE,
+    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
+    MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_BACK, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_PACKET,
+    VK_RETURN, VK_RIGHT, VK_TAB, VK_UP,
 };
 
-use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+};
 
 /// Windows input controller that uses the SendInput API for mouse and keyboard
 /// injection, including KEYEVENTF_UNICODE for Unicode character input.
@@ -38,7 +39,10 @@ impl Default for WindowsInputController {
 /// Returns the number of events successfully inserted, or an error.
 fn send_inputs(inputs: &[INPUT]) -> Result<u32, Error> {
     let sent = unsafe {
-        windows::Win32::UI::Input::KeyboardAndMouse::SendInput(inputs, std::mem::size_of::<INPUT>() as i32)
+        windows::Win32::UI::Input::KeyboardAndMouse::SendInput(
+            inputs,
+            std::mem::size_of::<INPUT>() as i32,
+        )
     };
     if sent == 0 {
         Err(Error::Input(format!(
@@ -154,8 +158,16 @@ impl InputController for WindowsInputController {
         let (dx, dy) = if !relative {
             let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) } as i64;
             let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) } as i64;
-            let norm_x = if screen_w > 0 { ((x as i64 * 65535) / screen_w) as i32 } else { x };
-            let norm_y = if screen_h > 0 { ((y as i64 * 65535) / screen_h) as i32 } else { y };
+            let norm_x = if screen_w > 0 {
+                ((x as i64 * 65535) / screen_w) as i32
+            } else {
+                x
+            };
+            let norm_y = if screen_h > 0 {
+                ((y as i64 * 65535) / screen_h) as i32
+            } else {
+                y
+            };
             (norm_x, norm_y)
         } else {
             (x, y)
@@ -224,7 +236,8 @@ impl InputController for WindowsInputController {
                     let input = keyboard_input(VIRTUAL_KEY(0), first, KEYEVENTF_UNICODE | flags);
                     send_inputs(&[input])?;
                     if let Some(second_unit) = second {
-                        let input = keyboard_input(VIRTUAL_KEY(0), second_unit, KEYEVENTF_UNICODE | flags);
+                        let input =
+                            keyboard_input(VIRTUAL_KEY(0), second_unit, KEYEVENTF_UNICODE | flags);
                         send_inputs(&[input])?;
                     }
                 }
@@ -251,35 +264,19 @@ impl InputController for WindowsInputController {
         let (first, second) = char_to_utf16_surrogates(ch);
 
         // Key down
-        let input_down = keyboard_input(
-            VK_PACKET,
-            first,
-            KEYEVENTF_UNICODE,
-        );
+        let input_down = keyboard_input(VK_PACKET, first, KEYEVENTF_UNICODE);
         send_inputs(&[input_down])?;
 
         // Key up
-        let input_up = keyboard_input(
-            VK_PACKET,
-            first,
-            KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-        );
+        let input_up = keyboard_input(VK_PACKET, first, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
         send_inputs(&[input_up])?;
 
         // If this is a supplementary character, send the low surrogate as well.
         if let Some(low) = second {
-            let input_down = keyboard_input(
-                VK_PACKET,
-                low,
-                KEYEVENTF_UNICODE,
-            );
+            let input_down = keyboard_input(VK_PACKET, low, KEYEVENTF_UNICODE);
             send_inputs(&[input_down])?;
 
-            let input_up = keyboard_input(
-                VK_PACKET,
-                low,
-                KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-            );
+            let input_up = keyboard_input(VK_PACKET, low, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
             send_inputs(&[input_up])?;
         }
 
@@ -324,9 +321,18 @@ mod tests {
 
     #[test]
     fn test_function_key_mapping() {
-        assert_eq!(key_code_to_vk(&KeyCode::Function(1)), Some(VIRTUAL_KEY(0x70)));
-        assert_eq!(key_code_to_vk(&KeyCode::Function(12)), Some(VIRTUAL_KEY(0x7B)));
-        assert_eq!(key_code_to_vk(&KeyCode::Function(24)), Some(VIRTUAL_KEY(0x87)));
+        assert_eq!(
+            key_code_to_vk(&KeyCode::Function(1)),
+            Some(VIRTUAL_KEY(0x70))
+        );
+        assert_eq!(
+            key_code_to_vk(&KeyCode::Function(12)),
+            Some(VIRTUAL_KEY(0x7B))
+        );
+        assert_eq!(
+            key_code_to_vk(&KeyCode::Function(24)),
+            Some(VIRTUAL_KEY(0x87))
+        );
         assert_eq!(key_code_to_vk(&KeyCode::Function(0)), None);
         assert_eq!(key_code_to_vk(&KeyCode::Function(25)), None);
     }

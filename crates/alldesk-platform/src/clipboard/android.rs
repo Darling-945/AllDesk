@@ -1,6 +1,6 @@
 use alldesk_core::{Error, Result};
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Clipboard content types supported for sync between peers.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,7 +21,11 @@ impl ClipboardContent {
                 0u8.hash(&mut hasher);
                 s.hash(&mut hasher);
             }
-            ClipboardContent::Image { width, height, pixels } => {
+            ClipboardContent::Image {
+                width,
+                height,
+                pixels,
+            } => {
                 1u8.hash(&mut hasher);
                 width.hash(&mut hasher);
                 height.hash(&mut hasher);
@@ -51,6 +55,8 @@ impl ClipboardMonitor {
     }
 
     pub fn set_content(&mut self, _content: &ClipboardContent) -> Result<()> {
-        Err(Error::Clipboard("Clipboard not supported on Android".into()))
+        Err(Error::Clipboard(
+            "Clipboard not supported on Android".into(),
+        ))
     }
 }

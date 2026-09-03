@@ -131,7 +131,12 @@ mod tests {
 
     #[test]
     fn test_rect_fields() {
-        let rect = Rect { x: 10, y: 20, width: 100, height: 200 };
+        let rect = Rect {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 200,
+        };
         assert_eq!(rect.x, 10);
         assert_eq!(rect.width, 100);
     }

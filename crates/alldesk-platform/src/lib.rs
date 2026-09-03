@@ -24,7 +24,7 @@ pub mod clipboard {
     mod sanitize;
     mod sync;
 
-    pub use sanitize::{sanitize_text, sanitize_image, SanitizeResult};
+    pub use sanitize::{sanitize_image, sanitize_text, SanitizeResult};
     pub use sync::ClipboardSync;
 }
 
@@ -32,8 +32,8 @@ pub mod input {
     mod controller;
     mod permission;
 
+    pub use controller::{ButtonState, InputController, KeyCode, KeyState, MouseButton};
     pub use permission::InputPermission;
-    pub use controller::{InputController, MouseButton, ButtonState, KeyCode, KeyState};
 
     cfg_if::cfg_if! {
         if #[cfg(target_os = "windows")] {

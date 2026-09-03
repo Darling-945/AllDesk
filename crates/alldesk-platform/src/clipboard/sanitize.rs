@@ -57,10 +57,7 @@ pub fn sanitize_text(text: &str) -> SanitizeResult {
         if lower.contains(keyword) {
             // Check if this looks like a key=value pair containing a secret
             if looks_like_secret_value(text, keyword) {
-                return SanitizeResult::Blocked(format!(
-                    "Detected sensitive content: {}",
-                    keyword
-                ));
+                return SanitizeResult::Blocked(format!("Detected sensitive content: {}", keyword));
             }
         }
     }
@@ -85,13 +82,11 @@ pub fn sanitize_image(width: usize, height: usize, pixels: &[u8]) -> SanitizeRes
         Some(exp) if exp == pixels.len() && pixels.len() <= MAX_IMAGE_SIZE => {
             SanitizeResult::Allowed("ok".into())
         }
-        Some(exp) if pixels.len() != exp => {
-            SanitizeResult::Blocked(format!(
-                "Pixel data size mismatch: expected {}, got {}",
-                exp,
-                pixels.len()
-            ))
-        }
+        Some(exp) if pixels.len() != exp => SanitizeResult::Blocked(format!(
+            "Pixel data size mismatch: expected {}, got {}",
+            exp,
+            pixels.len()
+        )),
         _ => SanitizeResult::Blocked(format!(
             "Image too large ({} bytes, max {})",
             pixels.len(),
@@ -186,10 +181,7 @@ fn looks_like_token(text: &str) -> bool {
     }
 
     // Long hex string (common for tokens/keys)
-    let hex_only: String = trimmed
-        .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .collect();
+    let hex_only: String = trimmed.chars().filter(|c| c.is_ascii_hexdigit()).collect();
     if hex_only.len() >= 32 && hex_only.len() == trimmed.len() {
         return true;
     }
@@ -272,8 +264,12 @@ mod tests {
 
     #[test]
     fn test_luhn_check() {
-        assert!(luhn_check(&[4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]));
-        assert!(!luhn_check(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6]));
+        assert!(luhn_check(&[
+            4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+        ]));
+        assert!(!luhn_check(&[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6
+        ]));
     }
 
     #[test]

@@ -1,11 +1,10 @@
-pub mod transfer;
 pub mod manifest;
+pub mod transfer;
 pub mod validate;
 
-pub use transfer::{FileTransfer, FileChunk, ProgressCallback};
 pub use manifest::FileManifest;
+pub use transfer::{FileChunk, FileTransfer, ProgressCallback};
 pub use validate::{
-    validate_filename, validate_file_content, validate_file_size,
-    detect_file_type, compute_crc32, verify_crc32,
-    ValidationResult, FileCategory, MAX_FILE_SIZE,
+    compute_crc32, detect_file_type, validate_file_content, validate_file_size, validate_filename,
+    verify_crc32, FileCategory, ValidationResult, MAX_FILE_SIZE,
 };

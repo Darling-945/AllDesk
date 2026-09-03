@@ -83,11 +83,25 @@ impl ServerConfig {
 
     /// Apply CLI argument overrides to the configuration.
     #[allow(dead_code)]
-    pub fn apply_cli_overrides(&mut self, signaling: Option<u16>, relay: Option<u16>, stun: Option<u16>, health: Option<u16>) {
-        if let Some(p) = signaling { self.signaling_port = p; }
-        if let Some(p) = relay { self.relay_port = p; }
-        if let Some(p) = stun { self.stun_port = p; }
-        if let Some(p) = health { self.health_port = p; }
+    pub fn apply_cli_overrides(
+        &mut self,
+        signaling: Option<u16>,
+        relay: Option<u16>,
+        stun: Option<u16>,
+        health: Option<u16>,
+    ) {
+        if let Some(p) = signaling {
+            self.signaling_port = p;
+        }
+        if let Some(p) = relay {
+            self.relay_port = p;
+        }
+        if let Some(p) = stun {
+            self.stun_port = p;
+        }
+        if let Some(p) = health {
+            self.health_port = p;
+        }
     }
 
     /// Load config from file if it exists, fall back to env then defaults.
@@ -110,7 +124,11 @@ impl ServerConfig {
         }
 
         // Try default config file locations
-        for default_path in &["alldesk-server.toml", "config.toml", "/etc/alldesk/server.toml"] {
+        for default_path in &[
+            "alldesk-server.toml",
+            "config.toml",
+            "/etc/alldesk/server.toml",
+        ] {
             let path = Path::new(default_path);
             if path.exists() {
                 if let Ok(config) = Self::from_file(path) {
@@ -176,7 +194,10 @@ peer_timeout_secs = 120
 
     #[test]
     fn test_config_validate_rejects_zero_port() {
-        let config = ServerConfig { signaling_port: 0, ..Default::default() };
+        let config = ServerConfig {
+            signaling_port: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

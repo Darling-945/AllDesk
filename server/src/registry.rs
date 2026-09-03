@@ -92,7 +92,10 @@ impl PeerRegistry {
     pub async fn unregister(&self, peer_id: &str) -> bool {
         let mut peers = self.peers.lock().await;
         if let Some(record) = peers.remove(peer_id) {
-            info!("Peer unregistered: {} ({})", record.peer_id, record.peer_name);
+            info!(
+                "Peer unregistered: {} ({})",
+                record.peer_id, record.peer_name
+            );
             crate::metrics::record_active_peers(peers.len());
             true
         } else {
@@ -130,10 +133,7 @@ impl PeerRegistry {
         peers.retain(|_, record| {
             let alive = record.last_seen.elapsed() <= PEER_TIMEOUT;
             if !alive {
-                info!(
-                    "Peer expired: {} ({})",
-                    record.peer_id, record.peer_name
-                );
+                info!("Peer expired: {} ({})", record.peer_id, record.peer_name);
             }
             alive
         });
@@ -179,9 +179,7 @@ pub enum SignalingMessage {
         auth_token: Option<String>,
     },
     /// Peer requests lookup of another peer.
-    Lookup {
-        target_peer_id: String,
-    },
+    Lookup { target_peer_id: String },
     /// Server responds with lookup result.
     LookupResponse {
         target_peer_id: String,
@@ -222,24 +220,17 @@ pub enum SignalingMessage {
         session_id: Option<String>,
     },
     /// Server assigns a relay session.
-    RelayAssigned {
-        session_id: String,
-        relay_port: u16,
-    },
+    RelayAssigned { session_id: String, relay_port: u16 },
     /// List all peers.
     ListPeers,
     /// Server responds with peer list.
-    PeerList {
-        peers: Vec<PeerListEntry>,
-    },
+    PeerList { peers: Vec<PeerListEntry> },
     /// Heartbeat to keep registration alive.
     Heartbeat,
     /// Server acknowledges heartbeat.
     HeartbeatAck,
     /// Generic error from server.
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// Entry in the peer list sent to clients.

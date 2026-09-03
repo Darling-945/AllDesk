@@ -11,18 +11,18 @@ pub mod transport;
 #[allow(dead_code)]
 pub mod bwe;
 
-use async_trait::async_trait;
 use alldesk_core::Result;
+use async_trait::async_trait;
 
 pub use channel::Channel;
 pub use discovery::{LanDiscovery, PeerDiscovered};
-pub use flow::{FlowController, FlowConfig, ChannelStats};
+pub use e2e_crypto::{hmac_check, hmac_verify, CryptoAlgorithm, E2ECrypto};
+pub use flow::{ChannelStats, FlowConfig, FlowController};
 pub use ice::{IceAgent, IceCandidate, IceCandidateType};
-pub use quic_conn::{QuicEndpoint, cert_fingerprint};
-pub use reconnect::{ReconnectManager, ConnectionState};
+pub use latency::{LatencySample, LatencyStats, PipelineLatencyTracker, StageTimer};
+pub use quic_conn::{cert_fingerprint, QuicEndpoint};
+pub use reconnect::{ConnectionState, ReconnectManager};
 pub use transport::QuicTransport;
-pub use latency::{StageTimer, PipelineLatencyTracker, LatencyStats, LatencySample};
-pub use e2e_crypto::{E2ECrypto, CryptoAlgorithm, hmac_verify, hmac_check};
 
 #[async_trait]
 pub trait Transport: Send + Sync {
@@ -63,7 +63,7 @@ mod tests {
         // Accept and connect concurrently
         let server_handle = tokio::spawn(async move {
             let conn = server.accept().await.unwrap();
-            
+
             QuicTransport::new(conn, true)
         });
 
@@ -80,7 +80,10 @@ mod tests {
         });
 
         // Client sends on the Input channel (reliable stream)
-        client_transport.send(Channel::Input, b"hello world").await.unwrap();
+        client_transport
+            .send(Channel::Input, b"hello world")
+            .await
+            .unwrap();
 
         let (mut server_transport, _ch, data) = server_accept.await.unwrap();
         assert_eq!(&data, b"hello world");

@@ -3,8 +3,8 @@ use std::os::raw::{c_int, c_long, c_ulong};
 use std::ptr;
 use std::slice;
 
-use alldesk_core::{Error, Result};
 use alldesk_capture::capture::{CapturedFrame, FrameData, PixelFormat};
+use alldesk_core::{Error, Result};
 use vpx_sys::*;
 
 use super::decoder::{DecodedFrame, VideoDecoder};
@@ -117,12 +117,39 @@ pub struct Vp9Encoder {
     width: u32,
     height: u32,
     bitrate_kbps: u32,
+    fps: u32,
     force_keyframe: bool,
 }
 
 // SAFETY: libvpx context is self-contained; all access is through &mut self.
 unsafe impl Send for Vp9Encoder {}
 unsafe impl Sync for Vp9Encoder {}
+
+/// Realtime encoder config: every field set here must be set on *every*
+/// reconfiguration too — `vpx_codec_enc_config_set` applies the whole struct,
+/// so rebuilding from defaults without these would silently restore
+/// `g_lag_in_frames` = 25 and reintroduce ~800 ms of latency.
+fn realtime_config(
+    width: u32,
+    height: u32,
+    bitrate_kbps: u32,
+    fps: u32,
+) -> Result<vpx_codec_enc_cfg_t> {
+    let iface = vpx_ptr!(vpx_codec_vp9_cx());
+
+    let mut cfg: vpx_codec_enc_cfg_t = unsafe { MaybeUninit::zeroed().assume_init() };
+    vpx_call!(vpx_codec_enc_config_default(iface, &mut cfg, 0));
+
+    cfg.g_w = width;
+    cfg.g_h = height;
+    cfg.g_timebase.num = 1;
+    cfg.g_timebase.den = fps.max(1) as _;
+    cfg.rc_target_bitrate = bitrate_kbps;
+    cfg.g_threads = 4;
+    cfg.g_error_resilient = VPX_ERROR_RESILIENT_DEFAULT as _;
+    cfg.g_lag_in_frames = 0;
+    Ok(cfg)
+}
 
 impl Vp9Encoder {
     pub fn new(width: u32, height: u32, bitrate_kbps: u32, fps: u32) -> Result<Self> {
@@ -132,17 +159,7 @@ impl Vp9Encoder {
 
         let iface = vpx_ptr!(vpx_codec_vp9_cx());
 
-        let mut cfg: vpx_codec_enc_cfg_t = unsafe { MaybeUninit::zeroed().assume_init() };
-        vpx_call!(vpx_codec_enc_config_default(iface, &mut cfg, 0));
-
-        cfg.g_w = width;
-        cfg.g_h = height;
-        cfg.g_timebase.num = 1;
-        cfg.g_timebase.den = fps as _;
-        cfg.rc_target_bitrate = bitrate_kbps;
-        cfg.g_threads = 4;
-        cfg.g_error_resilient = VPX_ERROR_RESILIENT_DEFAULT as _;
-        cfg.g_lag_in_frames = 0;
+        let cfg = realtime_config(width, height, bitrate_kbps, fps)?;
 
         let mut ctx: vpx_codec_ctx_t = unsafe { MaybeUninit::zeroed().assume_init() };
         vpx_call!(vpx_codec_enc_init_ver(
@@ -171,8 +188,24 @@ impl Vp9Encoder {
             width,
             height,
             bitrate_kbps,
+            fps,
             force_keyframe: false,
         })
+    }
+
+    /// Live reconfiguration: apply a new bitrate and/or FPS without
+    /// recreating the encoder context (rate-control state is preserved).
+    /// Errors from libvpx are logged by the caller; on failure the encoder
+    /// keeps running with its previous parameters.
+    pub fn reconfigure(&mut self, bitrate_kbps: u32, fps: u32) {
+        self.bitrate_kbps = bitrate_kbps;
+        self.fps = fps;
+        match realtime_config(self.width, self.height, bitrate_kbps, fps) {
+            Ok(cfg) => unsafe {
+                vpx_codec_enc_config_set(&mut self.ctx, &cfg);
+            },
+            Err(e) => tracing::warn!("VP9 reconfigure: {}", e),
+        }
     }
 }
 
@@ -181,7 +214,9 @@ impl VideoEncoder for Vp9Encoder {
         let raw = match &frame.data {
             FrameData::Cpu(d) => d,
             FrameData::GpuTexture(_) => {
-                return Err(vpx_err!("GPU texture not supported by VP9 software encoder"));
+                return Err(vpx_err!(
+                    "GPU texture not supported by VP9 software encoder"
+                ));
             }
         };
 
@@ -260,20 +295,7 @@ impl VideoEncoder for Vp9Encoder {
     }
 
     fn set_bitrate(&mut self, bitrate_kbps: u32) {
-        self.bitrate_kbps = bitrate_kbps;
-        let iface = unsafe { vpx_codec_vp9_cx() };
-        if iface.is_null() {
-            return;
-        }
-        let mut cfg: vpx_codec_enc_cfg_t = unsafe { MaybeUninit::zeroed().assume_init() };
-        if unsafe { vpx_codec_enc_config_default(iface, &mut cfg, 0) } as i32 == 0 {
-            cfg.g_w = self.width;
-            cfg.g_h = self.height;
-            cfg.rc_target_bitrate = bitrate_kbps;
-            unsafe {
-                vpx_codec_enc_config_set(&mut self.ctx, &cfg);
-            }
-        }
+        self.reconfigure(bitrate_kbps, self.fps);
     }
 
     fn request_key_frame(&mut self) {
@@ -349,8 +371,7 @@ impl VideoDecoder for Vp9Decoder {
             for row in 0..h as usize {
                 let src = img.planes[0].add(row * img.stride[0] as usize);
                 let dst = row * w as usize;
-                i420[dst..dst + w as usize]
-                    .copy_from_slice(slice::from_raw_parts(src, w as usize));
+                i420[dst..dst + w as usize].copy_from_slice(slice::from_raw_parts(src, w as usize));
             }
             for row in 0..(h / 2) as usize {
                 let src = img.planes[1].add(row * img.stride[1] as usize);
@@ -420,7 +441,9 @@ mod tests {
         let mut enc = Vp9Encoder::new(w, h, 500, 30).unwrap();
         let mut dec = Vp9Decoder::new(w, h).unwrap();
 
-        let bgra: Vec<u8> = (0..w * h).flat_map(|_| [100u8, 150u8, 200u8, 255u8]).collect();
+        let bgra: Vec<u8> = (0..w * h)
+            .flat_map(|_| [100u8, 150u8, 200u8, 255u8])
+            .collect();
         let frame = CapturedFrame {
             data: FrameData::Cpu(bgra),
             width: w,

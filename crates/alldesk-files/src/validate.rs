@@ -3,9 +3,9 @@
 //! Validates transferred files for integrity, size limits, and dangerous
 //! content patterns (e.g., executables, scripts with suspicious payloads).
 
-use std::path::Path;
-use alldesk_core::Result;
 use alldesk_core::error::Error;
+use alldesk_core::Result;
+use std::path::Path;
 
 /// Maximum allowed file size (4 GB).
 pub const MAX_FILE_SIZE: u64 = 4 * 1024 * 1024 * 1024;
@@ -69,68 +69,181 @@ struct MagicSignature {
 
 const MAGIC_SIGNATURES: &[MagicSignature] = &[
     // Images
-    MagicSignature { offset: 0, bytes: b"\x89PNG\r\n\x1a\n", category: FileCategory::Image, name: "PNG" },
-    MagicSignature { offset: 0, bytes: b"\xFF\xD8\xFF", category: FileCategory::Image, name: "JPEG" },
-    MagicSignature { offset: 0, bytes: b"GIF87a", category: FileCategory::Image, name: "GIF87a" },
-    MagicSignature { offset: 0, bytes: b"GIF89a", category: FileCategory::Image, name: "GIF89a" },
-    MagicSignature { offset: 0, bytes: b"BM", category: FileCategory::Image, name: "BMP" },
-    MagicSignature { offset: 0, bytes: b"RIFF", category: FileCategory::Image, name: "WebP/RIFF" },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x89PNG\r\n\x1a\n",
+        category: FileCategory::Image,
+        name: "PNG",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\xFF\xD8\xFF",
+        category: FileCategory::Image,
+        name: "JPEG",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"GIF87a",
+        category: FileCategory::Image,
+        name: "GIF87a",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"GIF89a",
+        category: FileCategory::Image,
+        name: "GIF89a",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"BM",
+        category: FileCategory::Image,
+        name: "BMP",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"RIFF",
+        category: FileCategory::Image,
+        name: "WebP/RIFF",
+    },
     // Video
-    MagicSignature { offset: 0, bytes: b"\x1a\x45\xdf\xa3", category: FileCategory::Video, name: "MKV/WebM" },
-    MagicSignature { offset: 0, bytes: b"\x00\x00\x00\x1c\x66\x74\x79\x70", category: FileCategory::Video, name: "MP4" },
-    MagicSignature { offset: 0, bytes: b"\x00\x00\x00\x20\x66\x74\x79\x70", category: FileCategory::Video, name: "MP4" },
-    MagicSignature { offset: 0, bytes: b"\x00\x00\x00\x18\x66\x74\x79\x70", category: FileCategory::Video, name: "MP4" },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x1a\x45\xdf\xa3",
+        category: FileCategory::Video,
+        name: "MKV/WebM",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x00\x00\x00\x1c\x66\x74\x79\x70",
+        category: FileCategory::Video,
+        name: "MP4",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x00\x00\x00\x20\x66\x74\x79\x70",
+        category: FileCategory::Video,
+        name: "MP4",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x00\x00\x00\x18\x66\x74\x79\x70",
+        category: FileCategory::Video,
+        name: "MP4",
+    },
     // Audio
-    MagicSignature { offset: 0, bytes: b"OggS", category: FileCategory::Audio, name: "OGG" },
-    MagicSignature { offset: 0, bytes: b"fLaC", category: FileCategory::Audio, name: "FLAC" },
-    MagicSignature { offset: 0, bytes: b"ID3", category: FileCategory::Audio, name: "MP3/ID3" },
+    MagicSignature {
+        offset: 0,
+        bytes: b"OggS",
+        category: FileCategory::Audio,
+        name: "OGG",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"fLaC",
+        category: FileCategory::Audio,
+        name: "FLAC",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"ID3",
+        category: FileCategory::Audio,
+        name: "MP3/ID3",
+    },
     // Archives
-    MagicSignature { offset: 0, bytes: b"PK\x03\x04", category: FileCategory::Archive, name: "ZIP" },
-    MagicSignature { offset: 0, bytes: b"\x1f\x8b", category: FileCategory::Archive, name: "GZIP" },
-    MagicSignature { offset: 0, bytes: b"BZh", category: FileCategory::Archive, name: "BZIP2" },
-    MagicSignature { offset: 0, bytes: b"\xfd7zXZ\x00", category: FileCategory::Archive, name: "XZ" },
-    MagicSignature { offset: 0, bytes: b"Rar!\x1a\x07", category: FileCategory::Archive, name: "RAR" },
-    MagicSignature { offset: 0, bytes: b"\x37\x7a\xbc\xaf\x27\x1c", category: FileCategory::Archive, name: "7Z" },
+    MagicSignature {
+        offset: 0,
+        bytes: b"PK\x03\x04",
+        category: FileCategory::Archive,
+        name: "ZIP",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x1f\x8b",
+        category: FileCategory::Archive,
+        name: "GZIP",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"BZh",
+        category: FileCategory::Archive,
+        name: "BZIP2",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\xfd7zXZ\x00",
+        category: FileCategory::Archive,
+        name: "XZ",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"Rar!\x1a\x07",
+        category: FileCategory::Archive,
+        name: "RAR",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x37\x7a\xbc\xaf\x27\x1c",
+        category: FileCategory::Archive,
+        name: "7Z",
+    },
     // Documents
-    MagicSignature { offset: 0, bytes: b"%PDF", category: FileCategory::Document, name: "PDF" },
+    MagicSignature {
+        offset: 0,
+        bytes: b"%PDF",
+        category: FileCategory::Document,
+        name: "PDF",
+    },
     // Executables
-    MagicSignature { offset: 0, bytes: b"MZ", category: FileCategory::Executable, name: "EXE/PE" },
-    MagicSignature { offset: 0, bytes: b"\x7fELF", category: FileCategory::Executable, name: "ELF" },
-    MagicSignature { offset: 0, bytes: b"\xfe\xed\xfa", category: FileCategory::Executable, name: "Mach-O" },
-    MagicSignature { offset: 0, bytes: b"\xce\xfa\xed\xfe", category: FileCategory::Executable, name: "Mach-O" },
+    MagicSignature {
+        offset: 0,
+        bytes: b"MZ",
+        category: FileCategory::Executable,
+        name: "EXE/PE",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\x7fELF",
+        category: FileCategory::Executable,
+        name: "ELF",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\xfe\xed\xfa",
+        category: FileCategory::Executable,
+        name: "Mach-O",
+    },
+    MagicSignature {
+        offset: 0,
+        bytes: b"\xce\xfa\xed\xfe",
+        category: FileCategory::Executable,
+        name: "Mach-O",
+    },
 ];
 
 /// Detect file category from magic bytes (first few bytes of the file).
 pub fn detect_file_type(data: &[u8]) -> (FileCategory, Option<&'static str>) {
     for sig in MAGIC_SIGNATURES {
         if data.len() >= sig.offset + sig.bytes.len()
-            && &data[sig.offset..sig.offset + sig.bytes.len()] == sig.bytes {
-                return (sig.category, Some(sig.name));
-            }
+            && &data[sig.offset..sig.offset + sig.bytes.len()] == sig.bytes
+        {
+            return (sig.category, Some(sig.name));
+        }
     }
     (FileCategory::Unknown, None)
 }
 
 /// Dangerous filename patterns that should be blocked.
 const BLOCKED_EXTENSIONS: &[&str] = &[
-    "exe", "bat", "cmd", "com", "msi", "scr", "pif",
-    "vbs", "vbe", "js", "jse", "wsh", "wsf",
-    "ps1", "psm1", "psc1",
-    "sh", "bash", "zsh", "fish",
-    "dll", "so", "dylib",
-    "sys", "drv",
-    "reg", "inf",
+    "exe", "bat", "cmd", "com", "msi", "scr", "pif", "vbs", "vbe", "js", "jse", "wsh", "wsf",
+    "ps1", "psm1", "psc1", "sh", "bash", "zsh", "fish", "dll", "so", "dylib", "sys", "drv", "reg",
+    "inf",
 ];
 
 /// Double-extension attack patterns (e.g., "file.txt.exe").
 const DOUBLE_EXT_TRICKS: &[&str] = &[
-    "txt.exe", "pdf.exe", "jpg.exe", "png.exe", "doc.exe",
-    "txt.scr", "pdf.scr", "jpg.scr",
-    "txt.vbs", "pdf.vbs",
-    "txt.js", "pdf.js",
-    "txt.bat", "pdf.bat", "jpg.bat",
-    "txt.cmd", "pdf.cmd",
-    "txt.ps1", "pdf.ps1",
+    "txt.exe", "pdf.exe", "jpg.exe", "png.exe", "doc.exe", "txt.scr", "pdf.scr", "jpg.scr",
+    "txt.vbs", "pdf.vbs", "txt.js", "pdf.js", "txt.bat", "pdf.bat", "jpg.bat", "txt.cmd",
+    "pdf.cmd", "txt.ps1", "pdf.ps1",
 ];
 
 /// Validate a filename for security issues.
@@ -140,7 +253,11 @@ pub fn validate_filename(filename: &str) -> Result<ValidationResult> {
 
     // Check filename length.
     if filename.len() > MAX_FILENAME_LEN {
-        errors.push(format!("Filename too long: {} chars (max {})", filename.len(), MAX_FILENAME_LEN));
+        errors.push(format!(
+            "Filename too long: {} chars (max {})",
+            filename.len(),
+            MAX_FILENAME_LEN
+        ));
     }
 
     // Check for path traversal.

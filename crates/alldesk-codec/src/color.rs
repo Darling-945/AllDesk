@@ -228,7 +228,9 @@ pub fn bgra_to_nv12(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
             let b = bgra[pixel_offset] as f64;
             let g = bgra[pixel_offset + 1] as f64;
             let r = bgra[pixel_offset + 2] as f64;
-            let y = (0.257 * r + 0.504 * g + 0.098 * b + 16.0).round().clamp(0.0, 255.0) as u8;
+            let y = (0.257 * r + 0.504 * g + 0.098 * b + 16.0)
+                .round()
+                .clamp(0.0, 255.0) as u8;
             output[row * w + col] = y;
         }
     }
@@ -254,8 +256,12 @@ pub fn bgra_to_nv12(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
             let avg_g = sum_g / 4.0;
             let avg_r = sum_r / 4.0;
 
-            let u = (-0.148 * avg_r - 0.291 * avg_g + 0.439 * avg_b + 128.0).round().clamp(0.0, 255.0) as u8;
-            let v = (0.439 * avg_r - 0.368 * avg_g - 0.071 * avg_b + 128.0).round().clamp(0.0, 255.0) as u8;
+            let u = (-0.148 * avg_r - 0.291 * avg_g + 0.439 * avg_b + 128.0)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+            let v = (0.439 * avg_r - 0.368 * avg_g - 0.071 * avg_b + 128.0)
+                .round()
+                .clamp(0.0, 255.0) as u8;
 
             let uv_offset = y_size + (uv_row * uv_stride + uv_col * 2);
             if uv_offset + 1 < output.len() {

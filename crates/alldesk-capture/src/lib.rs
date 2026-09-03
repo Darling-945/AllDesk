@@ -15,4 +15,7 @@ cfg_if::cfg_if! {
     }
 }
 
-pub use capture::{CaptureProvider, CapturedFrame, CursorInfo, CursorShapeType, FrameData, MonitorInfo, PixelFormat, CaptureConfig};
+pub use capture::{
+    CaptureConfig, CaptureProvider, CapturedFrame, CursorInfo, CursorShapeType, FrameData,
+    MonitorInfo, PixelFormat,
+};

@@ -4,43 +4,42 @@
 
 ## 功能
 
-- 屏幕捕获与实时传输（DXGI / CoreGraphics / X11 / Wayland / MediaProjection）
-- 视频编解码（VP9 / H.264 / AV1）
-- 音频采集与播放（cpal + Opus）
+- 屏幕捕获与实时传输（Windows DXGI；Android MediaProjection；macOS/Linux 后端待实现）
+- 视频编解码（VP9 软编软解，RTT/丢包驱动的自适应码率与帧率）
+- 音频采集与播放（cpal，PCM 直传）
 - 键鼠控制（平台原生 API 注入）
 - 剪贴板同步
-- 文件传输（分块、断点续传）
-- 录屏（WebM 封装）
-- 白板标注与同步
-- QUIC P2P 直连 + 中继回退 + STUN + mDNS 发现
+- 文件传输（分块 + CRC32 校验）
+- 会话录屏（ALDREC/WebM，VP9 直存）
+- QUIC P2P 直连 + mDNS 发现 + 断线自动重连
 
 ## 架构
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Flutter UI (Riverpod)              │
-├─────────────────────────────────────────────────────┤
-│                alldesk-ffi (flutter_rust_bridge v2)  │
-├──────────┬──────────┬──────────┬──────────┬─────────┤
-│ capture  │  codec   │  audio   │  input   │clipboard│
-├──────────┴──────────┴──────────┴──────────┴─────────┤
-│            alldesk-net (QUIC Transport)              │
-├─────────────────────────────────────────────────────┤
-│               alldesk-core (共享类型/配置)            │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                     Flutter UI (Riverpod)                 │
+├──────────────────────────────────────────────────────────┤
+│                alldesk-ffi (flutter_rust_bridge v2)       │
+├──────────┬──────────┬───────────┬─────────┬──────────────┤
+│ capture  │  codec   │ platform  │  files  │  recording   │
+├──────────┴──────────┴───────────┴─────────┴──────────────┤
+│             alldesk-net (QUIC Transport)                 │
+├──────────────────────────────────────────────────────────┤
+│        alldesk-core (共享类型 / 配置 / 自适应控制)          │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### Monorepo 布局
 
 | 目录 | 说明 |
 |------|------|
-| `crates/alldesk-core` | 共享错误类型、配置 |
-| `crates/alldesk-capture` | 屏幕捕获（DXGI / CoreGraphics / X11 / Wayland / MediaProjection） |
+| `crates/alldesk-core` | 共享错误类型、配置、自适应码率/帧率控制策略 |
+| `crates/alldesk-capture` | 屏幕捕获（Windows DXGI / Android MediaProjection） |
 | `crates/alldesk-platform` | 本机外设集成：音频采集/播放 + 剪贴板 + 键鼠注入 |
-| `crates/alldesk-codec` | 视频编解码（VP9 / H.264 / AV1） |
-| `crates/alldesk-net` | 网络层（QUIC P2P + 中继 + STUN + mDNS） |
-| `crates/alldesk-files` | 文件传输（分块、断点续传） |
-| `crates/alldesk-recording` | 录屏（WebM 封装） |
+| `crates/alldesk-codec` | 视频编解码（VP9） |
+| `crates/alldesk-net` | 网络层（QUIC P2P + 流控 + 重连 + mDNS；中继/STUN/ICE/TURN 在 `server/`） |
+| `crates/alldesk-files` | 文件传输（分块 + CRC32 校验） |
+| `crates/alldesk-recording` | 录屏（ALDREC/WebM 封装） |
 | `crates/alldesk-ffi` | Flutter FFI 桥接 |
 | `app/` | Flutter 应用 |
 | `server/` | 信令 + 中继服务器 |
@@ -48,8 +47,8 @@
 ### 数据流
 
 ```
-屏幕捕获 → 视频编码 → QUIC 传输 → 视频解码 → Flutter Texture 渲染
-音频采集 → Opus 编码 → QUIC 数据报 → Opus 解码 → 音频播放
+屏幕捕获 → VP9 编码（自适应码率/帧率）→ QUIC 传输 → VP9 解码 → Flutter 渲染
+音频采集 → PCM → QUIC 数据报 → PCM 播放
 Flutter 输入 → FFI → 输入控制器（OS 注入）
 ```
 
@@ -96,10 +95,11 @@ cd app && flutter build apk --release
 | 用途 | Rust | Dart/Flutter |
 |------|------|-------------|
 | QUIC | quinn 0.11 | — |
-| Protobuf | prost | — |
+| 视频编解码 | libvpx (VP9) | — |
 | Flutter 桥接 | flutter_rust_bridge 2 | flutter_rust_bridge |
 | 音频 I/O | cpal 0.17 | — |
 | 剪贴板 | arboard 3.4 | — |
+| 文件选择 | — | file_picker |
 | 状态管理 | — | flutter_riverpod |
 | 导航 | — | go_router |
 

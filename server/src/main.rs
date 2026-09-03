@@ -1,9 +1,9 @@
+mod config;
+mod metrics;
 mod registry;
 mod relay;
 mod signaling;
 mod stun;
-mod config;
-mod metrics;
 mod turn;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,7 +64,8 @@ fn parse_args() -> ServerArgs {
                     signaling_port = args[i + 1].parse().unwrap_or_else(|_| {
                         eprintln!(
                             "Invalid signaling port: {}, using default {}",
-                            args[i + 1], DEFAULT_SIGNALING_PORT
+                            args[i + 1],
+                            DEFAULT_SIGNALING_PORT
                         );
                         DEFAULT_SIGNALING_PORT
                     });
@@ -76,7 +77,8 @@ fn parse_args() -> ServerArgs {
                     relay_port = args[i + 1].parse().unwrap_or_else(|_| {
                         eprintln!(
                             "Invalid relay port: {}, using default {}",
-                            args[i + 1], DEFAULT_RELAY_PORT
+                            args[i + 1],
+                            DEFAULT_RELAY_PORT
                         );
                         DEFAULT_RELAY_PORT
                     });
@@ -88,7 +90,8 @@ fn parse_args() -> ServerArgs {
                     stun_port = args[i + 1].parse().unwrap_or_else(|_| {
                         eprintln!(
                             "Invalid STUN port: {}, using default {}",
-                            args[i + 1], DEFAULT_STUN_PORT
+                            args[i + 1],
+                            DEFAULT_STUN_PORT
                         );
                         DEFAULT_STUN_PORT
                     });
@@ -100,7 +103,8 @@ fn parse_args() -> ServerArgs {
                     turn_port = args[i + 1].parse().unwrap_or_else(|_| {
                         eprintln!(
                             "Invalid TURN port: {}, using default {}",
-                            args[i + 1], DEFAULT_TURN_PORT
+                            args[i + 1],
+                            DEFAULT_TURN_PORT
                         );
                         DEFAULT_TURN_PORT
                     });
@@ -112,7 +116,8 @@ fn parse_args() -> ServerArgs {
                     health_port = args[i + 1].parse().unwrap_or_else(|_| {
                         eprintln!(
                             "Invalid health port: {}, using default {}",
-                            args[i + 1], DEFAULT_HEALTH_PORT
+                            args[i + 1],
+                            DEFAULT_HEALTH_PORT
                         );
                         DEFAULT_HEALTH_PORT
                     });
@@ -124,7 +129,8 @@ fn parse_args() -> ServerArgs {
                     metrics_port = args[i + 1].parse().unwrap_or_else(|_| {
                         eprintln!(
                             "Invalid metrics port: {}, using default {}",
-                            args[i + 1], DEFAULT_METRICS_PORT
+                            args[i + 1],
+                            DEFAULT_METRICS_PORT
                         );
                         DEFAULT_METRICS_PORT
                     });
@@ -152,12 +158,30 @@ fn parse_args() -> ServerArgs {
                 println!("Usage: alldesk-server [OPTIONS]");
                 println!();
                 println!("Options:");
-                println!("  -s, --signaling-port <PORT>  WebSocket signaling port (default: {})", DEFAULT_SIGNALING_PORT);
-                println!("  -r, --relay-port <PORT>      QUIC relay port (default: {})", DEFAULT_RELAY_PORT);
-                println!("      --stun-port <PORT>       STUN UDP port (default: {})", DEFAULT_STUN_PORT);
-                println!("      --turn-port <PORT>       TURN UDP port (default: {})", DEFAULT_TURN_PORT);
-                println!("      --health-port <PORT>     HTTP health check port (default: {})", DEFAULT_HEALTH_PORT);
-                println!("      --metrics-port <PORT>    Prometheus metrics port (default: {})", DEFAULT_METRICS_PORT);
+                println!(
+                    "  -s, --signaling-port <PORT>  WebSocket signaling port (default: {})",
+                    DEFAULT_SIGNALING_PORT
+                );
+                println!(
+                    "  -r, --relay-port <PORT>      QUIC relay port (default: {})",
+                    DEFAULT_RELAY_PORT
+                );
+                println!(
+                    "      --stun-port <PORT>       STUN UDP port (default: {})",
+                    DEFAULT_STUN_PORT
+                );
+                println!(
+                    "      --turn-port <PORT>       TURN UDP port (default: {})",
+                    DEFAULT_TURN_PORT
+                );
+                println!(
+                    "      --health-port <PORT>     HTTP health check port (default: {})",
+                    DEFAULT_HEALTH_PORT
+                );
+                println!(
+                    "      --metrics-port <PORT>    Prometheus metrics port (default: {})",
+                    DEFAULT_METRICS_PORT
+                );
                 println!("      --tls-cert <PATH>        TLS certificate PEM file (enables WSS)");
                 println!("      --tls-key <PATH>         TLS private key PEM file (enables WSS)");
                 println!("      --json-logs              Enable structured JSON logging");
@@ -173,7 +197,17 @@ fn parse_args() -> ServerArgs {
         i += 1;
     }
 
-    ServerArgs { signaling_port, relay_port, stun_port, turn_port, health_port, metrics_port, json_logs, tls_cert, tls_key }
+    ServerArgs {
+        signaling_port,
+        relay_port,
+        stun_port,
+        turn_port,
+        health_port,
+        metrics_port,
+        json_logs,
+        tls_cert,
+        tls_key,
+    }
 }
 
 /// Run a simple HTTP health check endpoint on the given port.
@@ -255,11 +289,8 @@ async fn main() -> anyhow::Result<()> {
     let broadcaster = signaling::SignalingBroadcaster::new();
 
     // Relay server
-    let relay_server = relay::RelayServer::new(
-        registry.clone(),
-        broadcaster.clone(),
-        args.relay_port,
-    );
+    let relay_server =
+        relay::RelayServer::new(registry.clone(), broadcaster.clone(), args.relay_port);
 
     // Shutdown signal
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -281,18 +312,16 @@ async fn main() -> anyhow::Result<()> {
 
     // TLS configuration (optional)
     let tls_config = match (&args.tls_cert, &args.tls_key) {
-        (Some(cert), Some(key)) => {
-            match signaling::TlsConfig::from_files(cert, key) {
-                Ok(tls) => {
-                    info!("  TLS enabled for signaling (WSS)");
-                    Some(tls)
-                }
-                Err(e) => {
-                    warn!("Failed to load TLS config, falling back to WS: {}", e);
-                    None
-                }
+        (Some(cert), Some(key)) => match signaling::TlsConfig::from_files(cert, key) {
+            Ok(tls) => {
+                info!("  TLS enabled for signaling (WSS)");
+                Some(tls)
             }
-        }
+            Err(e) => {
+                warn!("Failed to load TLS config, falling back to WS: {}", e);
+                None
+            }
+        },
         _ => None,
     };
 

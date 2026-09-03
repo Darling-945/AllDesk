@@ -104,16 +104,27 @@ pub trait InputController: Send + Sync {
     /// Get the current display layout for multi-monitor coordinate mapping.
     /// Returns the primary display by default; platform implementations should override.
     fn get_displays(&self) -> Vec<DisplayRect> {
-        vec![DisplayRect { x: 0, y: 0, width: 1920, height: 1080 }]
+        vec![DisplayRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }]
     }
 
     /// Map normalized coordinates (0.0-1.0) to absolute pixel coordinates
     /// accounting for multi-monitor layout.
     fn map_to_display(&self, norm_x: f64, norm_y: f64, display_index: u32) -> (i32, i32) {
         let displays = self.get_displays();
-        let display = displays.get(display_index as usize)
+        let display = displays
+            .get(display_index as usize)
             .or_else(|| displays.first())
-            .unwrap_or(&DisplayRect { x: 0, y: 0, width: 1920, height: 1080 });
+            .unwrap_or(&DisplayRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            });
 
         let abs_x = display.x + (norm_x * display.width as f64) as i32;
         let abs_y = display.y + (norm_y * display.height as f64) as i32;
@@ -127,7 +138,12 @@ mod tests {
 
     #[test]
     fn test_touch_point_fields() {
-        let tp = TouchPoint { id: 0, x: 100.0, y: 200.0, pressure: 0.5 };
+        let tp = TouchPoint {
+            id: 0,
+            x: 100.0,
+            y: 200.0,
+            pressure: 0.5,
+        };
         assert_eq!(tp.id, 0);
         assert!((tp.x - 100.0).abs() < f64::EPSILON);
         assert!((tp.pressure - 0.5).abs() < f64::EPSILON);
@@ -136,25 +152,59 @@ mod tests {
     #[test]
     fn test_touch_event_variants() {
         let down = TouchEvent::Down {
-            points: vec![TouchPoint { id: 0, x: 10.0, y: 20.0, pressure: 1.0 }],
+            points: vec![TouchPoint {
+                id: 0,
+                x: 10.0,
+                y: 20.0,
+                pressure: 1.0,
+            }],
         };
         let up = TouchEvent::Up {
-            points: vec![TouchPoint { id: 0, x: 10.0, y: 20.0, pressure: 0.0 }],
+            points: vec![TouchPoint {
+                id: 0,
+                x: 10.0,
+                y: 20.0,
+                pressure: 0.0,
+            }],
         };
         let cancel = TouchEvent::Cancel {
-            points: vec![TouchPoint { id: 0, x: 10.0, y: 20.0, pressure: 0.0 }],
+            points: vec![TouchPoint {
+                id: 0,
+                x: 10.0,
+                y: 20.0,
+                pressure: 0.0,
+            }],
         };
 
-        match down { TouchEvent::Down { .. } => {}, _ => panic!("expected Down") }
-        match up { TouchEvent::Up { .. } => {}, _ => panic!("expected Up") }
-        match cancel { TouchEvent::Cancel { .. } => {}, _ => panic!("expected Cancel") }
+        match down {
+            TouchEvent::Down { .. } => {}
+            _ => panic!("expected Down"),
+        }
+        match up {
+            TouchEvent::Up { .. } => {}
+            _ => panic!("expected Up"),
+        }
+        match cancel {
+            TouchEvent::Cancel { .. } => {}
+            _ => panic!("expected Cancel"),
+        }
     }
 
     #[test]
     fn test_multi_touch_event() {
         let points = vec![
-            TouchPoint { id: 0, x: 100.0, y: 200.0, pressure: 0.8 },
-            TouchPoint { id: 1, x: 300.0, y: 400.0, pressure: 0.6 },
+            TouchPoint {
+                id: 0,
+                x: 100.0,
+                y: 200.0,
+                pressure: 0.8,
+            },
+            TouchPoint {
+                id: 1,
+                x: 300.0,
+                y: 400.0,
+                pressure: 0.6,
+            },
         ];
         let move_event = TouchEvent::Move { points };
         if let TouchEvent::Move { points: ref p } = move_event {
@@ -168,7 +218,12 @@ mod tests {
 
     #[test]
     fn test_display_rect_fields() {
-        let rect = DisplayRect { x: -1920, y: 0, width: 1920, height: 1080 };
+        let rect = DisplayRect {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
         assert_eq!(rect.x, -1920);
         assert_eq!(rect.width, 1920);
     }
@@ -177,15 +232,35 @@ mod tests {
     fn test_map_to_display_primary() {
         struct TestController;
         impl InputController for TestController {
-            fn mouse_move(&self, _x: i32, _y: i32, _relative: bool) -> Result<()> { Ok(()) }
-            fn mouse_click(&self, _button: MouseButton, _state: ButtonState) -> Result<()> { Ok(()) }
-            fn mouse_scroll(&self, _delta_x: i32, _delta_y: i32) -> Result<()> { Ok(()) }
-            fn key_event(&self, _key: KeyCode, _state: KeyState) -> Result<()> { Ok(()) }
-            fn unicode_char(&self, _ch: char) -> Result<()> { Ok(()) }
+            fn mouse_move(&self, _x: i32, _y: i32, _relative: bool) -> Result<()> {
+                Ok(())
+            }
+            fn mouse_click(&self, _button: MouseButton, _state: ButtonState) -> Result<()> {
+                Ok(())
+            }
+            fn mouse_scroll(&self, _delta_x: i32, _delta_y: i32) -> Result<()> {
+                Ok(())
+            }
+            fn key_event(&self, _key: KeyCode, _state: KeyState) -> Result<()> {
+                Ok(())
+            }
+            fn unicode_char(&self, _ch: char) -> Result<()> {
+                Ok(())
+            }
             fn get_displays(&self) -> Vec<DisplayRect> {
                 vec![
-                    DisplayRect { x: 0, y: 0, width: 1920, height: 1080 },
-                    DisplayRect { x: 1920, y: 0, width: 1920, height: 1080 },
+                    DisplayRect {
+                        x: 0,
+                        y: 0,
+                        width: 1920,
+                        height: 1080,
+                    },
+                    DisplayRect {
+                        x: 1920,
+                        y: 0,
+                        width: 1920,
+                        height: 1080,
+                    },
                 ]
             }
         }
@@ -216,13 +291,28 @@ mod tests {
     fn test_map_to_display_invalid_index_falls_back() {
         struct SingleDisplayController;
         impl InputController for SingleDisplayController {
-            fn mouse_move(&self, _x: i32, _y: i32, _relative: bool) -> Result<()> { Ok(()) }
-            fn mouse_click(&self, _button: MouseButton, _state: ButtonState) -> Result<()> { Ok(()) }
-            fn mouse_scroll(&self, _delta_x: i32, _delta_y: i32) -> Result<()> { Ok(()) }
-            fn key_event(&self, _key: KeyCode, _state: KeyState) -> Result<()> { Ok(()) }
-            fn unicode_char(&self, _ch: char) -> Result<()> { Ok(()) }
+            fn mouse_move(&self, _x: i32, _y: i32, _relative: bool) -> Result<()> {
+                Ok(())
+            }
+            fn mouse_click(&self, _button: MouseButton, _state: ButtonState) -> Result<()> {
+                Ok(())
+            }
+            fn mouse_scroll(&self, _delta_x: i32, _delta_y: i32) -> Result<()> {
+                Ok(())
+            }
+            fn key_event(&self, _key: KeyCode, _state: KeyState) -> Result<()> {
+                Ok(())
+            }
+            fn unicode_char(&self, _ch: char) -> Result<()> {
+                Ok(())
+            }
             fn get_displays(&self) -> Vec<DisplayRect> {
-                vec![DisplayRect { x: 0, y: 0, width: 1920, height: 1080 }]
+                vec![DisplayRect {
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                }]
             }
         }
 

@@ -1,11 +1,11 @@
-use std::net::SocketAddr;
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
+use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::time;
 
-use alldesk_core::Result;
 use alldesk_core::error::Error;
+use alldesk_core::Result;
 
 const DISCOVERY_PORT: u16 = 21117;
 const BROADCAST_INTERVAL: Duration = Duration::from_secs(2);
@@ -27,15 +27,19 @@ struct DiscoveryMessage {
 
 /// Build a UDP socket with SO_REUSEADDR set, then convert to `tokio::net::UdpSocket`.
 fn create_reuseaddr_udp_socket(bind_addr: &str) -> Result<tokio::net::UdpSocket> {
-    let addr: SocketAddr = bind_addr.parse()
+    let addr: SocketAddr = bind_addr
+        .parse()
         .map_err(|e| Error::Network(format!("parse addr {}: {}", bind_addr, e)))?;
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
         .map_err(|e| Error::Network(format!("create socket: {}", e)))?;
-    socket.set_reuse_address(true)
+    socket
+        .set_reuse_address(true)
         .map_err(|e| Error::Network(format!("set reuse_address: {}", e)))?;
-    socket.bind(&addr.into())
+    socket
+        .bind(&addr.into())
         .map_err(|e| Error::Network(format!("bind {}: {}", bind_addr, e)))?;
-    socket.set_nonblocking(true)
+    socket
+        .set_nonblocking(true)
         .map_err(|e| Error::Network(format!("set nonblocking: {}", e)))?;
     let std_socket: std::net::UdpSocket = socket.into();
     tokio::net::UdpSocket::from_std(std_socket)
@@ -59,7 +63,8 @@ impl LanDiscovery {
 
     pub async fn start_broadcast(&mut self, peer_id: &str, peer_name: &str) -> Result<()> {
         let socket = create_reuseaddr_udp_socket("0.0.0.0:0")?;
-        socket.set_broadcast(true)
+        socket
+            .set_broadcast(true)
             .map_err(|e| Error::Network(format!("set broadcast: {}", e)))?;
 
         let msg = DiscoveryMessage {
@@ -70,10 +75,13 @@ impl LanDiscovery {
         let data = serde_json::to_vec(&msg)
             .map_err(|e| Error::Network(format!("serialize discovery: {}", e)))?;
 
-        let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", DISCOVERY_PORT).parse()
+        let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", DISCOVERY_PORT)
+            .parse()
             .map_err(|e| Error::Network(format!("parse broadcast addr: {}", e)))?;
 
-        socket.send_to(&data, broadcast_addr).await
+        socket
+            .send_to(&data, broadcast_addr)
+            .await
             .map_err(|e| Error::Network(format!("broadcast: {}", e)))?;
 
         self.socket = Some(socket);
@@ -101,7 +109,8 @@ impl LanDiscovery {
                         peers.push(PeerDiscovered {
                             peer_id: msg.peer_id,
                             peer_name: msg.peer_name,
-                            addr: format!("{}:{}", addr.ip(), msg.port).parse()
+                            addr: format!("{}:{}", addr.ip(), msg.port)
+                                .parse()
                                 .unwrap_or(addr),
                         });
                     }
@@ -125,7 +134,8 @@ impl LanDiscovery {
         tx: tokio::sync::mpsc::Sender<PeerDiscovered>,
     ) -> Result<()> {
         let socket = create_reuseaddr_udp_socket(&format!("0.0.0.0:{}", DISCOVERY_PORT))?;
-        socket.set_broadcast(true)
+        socket
+            .set_broadcast(true)
             .map_err(|e| Error::Network(format!("broadcast: {}", e)))?;
 
         let broadcast_msg = DiscoveryMessage {
@@ -135,7 +145,8 @@ impl LanDiscovery {
         };
         let broadcast_data = serde_json::to_vec(&broadcast_msg)
             .map_err(|e| Error::Network(format!("serialize: {}", e)))?;
-        let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", DISCOVERY_PORT).parse()
+        let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", DISCOVERY_PORT)
+            .parse()
             .map_err(|e| Error::Network(format!("parse addr: {}", e)))?;
 
         let mut interval = time::interval(BROADCAST_INTERVAL);
@@ -181,11 +192,14 @@ impl LanDiscovery {
     pub fn test_socket() -> Result<()> {
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
             .map_err(|e| Error::Network(format!("create socket: {}", e)))?;
-        socket.set_reuse_address(true)
+        socket
+            .set_reuse_address(true)
             .map_err(|e| Error::Network(format!("reuse_address: {}", e)))?;
-        let addr: SocketAddr = format!("0.0.0.0:{}", DISCOVERY_PORT).parse()
+        let addr: SocketAddr = format!("0.0.0.0:{}", DISCOVERY_PORT)
+            .parse()
             .map_err(|e| Error::Network(format!("parse: {}", e)))?;
-        socket.bind(&addr.into())
+        socket
+            .bind(&addr.into())
             .map_err(|e| Error::Network(format!("bind 0.0.0.0:{}: {}", DISCOVERY_PORT, e)))?;
         Ok(())
     }
@@ -194,11 +208,14 @@ impl LanDiscovery {
     pub fn test_broadcast() -> Result<()> {
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
             .map_err(|e| Error::Network(format!("create socket: {}", e)))?;
-        socket.set_broadcast(true)
+        socket
+            .set_broadcast(true)
             .map_err(|e| Error::Network(format!("set_broadcast: {}", e)))?;
-        let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", DISCOVERY_PORT).parse()
+        let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", DISCOVERY_PORT)
+            .parse()
             .map_err(|e| Error::Network(format!("parse broadcast: {}", e)))?;
-        socket.send_to(b"ALGDESK_PING".as_ref(), &broadcast_addr.into())
+        socket
+            .send_to(b"ALGDESK_PING".as_ref(), &broadcast_addr.into())
             .map_err(|e| Error::Network(format!("send_to broadcast: {}", e)))?;
         Ok(())
     }
@@ -233,7 +250,10 @@ mod tests {
         let decoded: PeerDiscovered = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.peer_id, "abc");
         assert_eq!(decoded.peer_name, "Host1");
-        assert_eq!(decoded.addr, "192.168.1.10:21116".parse::<SocketAddr>().unwrap());
+        assert_eq!(
+            decoded.addr,
+            "192.168.1.10:21116".parse::<SocketAddr>().unwrap()
+        );
     }
 
     #[test]
@@ -257,7 +277,10 @@ mod tests {
         let mut discovery = LanDiscovery::new(21116);
 
         // Start broadcast from a random port
-        discovery.start_broadcast("test-peer-1", "TestHost").await.unwrap();
+        discovery
+            .start_broadcast("test-peer-1", "TestHost")
+            .await
+            .unwrap();
 
         // The broadcast should have been sent
         assert!(discovery.running);

@@ -2,12 +2,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use quinn::{ClientConfig, Endpoint, ServerConfig, Connection, TransportConfig, VarInt};
+use quinn::{ClientConfig, Connection, Endpoint, ServerConfig, TransportConfig, VarInt};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
-use alldesk_core::Result;
 use alldesk_core::error::Error;
+use alldesk_core::Result;
 
 const ALPN: &[&[u8]] = &[b"alldesk"];
 
@@ -44,9 +44,10 @@ fn sha256(data: &[u8]) -> [u8; 32] {
 fn generate_self_signed_cert() -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     let params = CertificateParams::new(Vec::<String>::new())
         .map_err(|e| Error::Network(format!("cert params: {}", e)))?;
-    let key_pair = KeyPair::generate()
-        .map_err(|e| Error::Network(format!("generate key: {}", e)))?;
-    let cert = params.self_signed(&key_pair)
+    let key_pair =
+        KeyPair::generate().map_err(|e| Error::Network(format!("generate key: {}", e)))?;
+    let cert = params
+        .self_signed(&key_pair)
         .map_err(|e| Error::Network(format!("self sign: {}", e)))?;
     let cert_der = CertificateDer::from(cert.der().to_vec());
     let key_der = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
@@ -111,7 +112,7 @@ fn make_client_config_insecure() -> Result<ClientConfig> {
     tls_config.alpn_protocols = ALPN.iter().map(|p| p.to_vec()).collect();
     let mut client_config = ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(tls_config)
-            .map_err(|e| Error::Network(format!("quic client config: {}", e)))?
+            .map_err(|e| Error::Network(format!("quic client config: {}", e)))?,
     ));
     client_config.transport_config(Arc::new(low_latency_transport_config()));
     Ok(client_config)
@@ -127,7 +128,7 @@ fn make_client_config_pinned(fingerprints: Vec<String>) -> Result<ClientConfig> 
     tls_config.alpn_protocols = ALPN.iter().map(|p| p.to_vec()).collect();
     let mut client_config = ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(tls_config)
-            .map_err(|e| Error::Network(format!("quic client config: {}", e)))?
+            .map_err(|e| Error::Network(format!("quic client config: {}", e)))?,
     ));
     client_config.transport_config(Arc::new(low_latency_transport_config()));
     Ok(client_config)
@@ -147,11 +148,15 @@ struct PinVerifier {
 
 impl PinVerifier {
     fn insecure() -> Self {
-        Self { allowed_fingerprints: Vec::new() }
+        Self {
+            allowed_fingerprints: Vec::new(),
+        }
     }
 
     fn pinned(fingerprints: Vec<String>) -> Self {
-        Self { allowed_fingerprints: fingerprints }
+        Self {
+            allowed_fingerprints: fingerprints,
+        }
     }
 }
 
@@ -171,9 +176,11 @@ impl rustls::client::danger::ServerCertVerifier for PinVerifier {
 
         // Pinned mode: check fingerprint against allowlist.
         let fp = cert_fingerprint(end_entity.as_ref());
-        if self.allowed_fingerprints.iter().any(|allowed| {
-            allowed.eq_ignore_ascii_case(&fp)
-        }) {
+        if self
+            .allowed_fingerprints
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(&fp))
+        {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General(format!(
@@ -245,7 +252,9 @@ impl QuicEndpoint {
     }
 
     pub async fn connect(&self, addr: SocketAddr) -> Result<Connection> {
-        let conn = self.endpoint.connect(addr, "alldesk")
+        let conn = self
+            .endpoint
+            .connect(addr, "alldesk")
             .map_err(|e| Error::Network(format!("initiate connection: {}", e)))?
             .await
             .map_err(|e| Error::Network(format!("connect: {}", e)))?;
@@ -253,15 +262,20 @@ impl QuicEndpoint {
     }
 
     pub async fn accept(&self) -> Result<Connection> {
-        let incoming = self.endpoint.accept().await
+        let incoming = self
+            .endpoint
+            .accept()
+            .await
             .ok_or_else(|| Error::Network("endpoint closed".into()))?;
-        let conn = incoming.await
+        let conn = incoming
+            .await
             .map_err(|e| Error::Network(format!("accept: {}", e)))?;
         Ok(conn)
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        self.endpoint.local_addr()
+        self.endpoint
+            .local_addr()
             .map_err(|e| Error::Network(format!("local addr: {}", e)))
     }
 
@@ -273,8 +287,8 @@ impl QuicEndpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Channel, QuicTransport, Transport};
     use rustls::client::danger::ServerCertVerifier;
-    use crate::{QuicTransport, Channel, Transport};
 
     #[test]
     fn test_cert_fingerprint_format() {
@@ -377,7 +391,10 @@ mod tests {
             (server_transport, data)
         });
 
-        client_transport.send(Channel::Input, b"low-latency-test").await.unwrap();
+        client_transport
+            .send(Channel::Input, b"low-latency-test")
+            .await
+            .unwrap();
         let (_, data) = server_task.await.unwrap();
         assert_eq!(&data, b"low-latency-test");
 

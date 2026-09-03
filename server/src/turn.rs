@@ -102,7 +102,10 @@ pub async fn run_turn_server(port: u16, shutdown: Arc<AtomicBool>) -> anyhow::Re
                 alive
             });
             if before != st.allocations.len() {
-                info!("Cleaned up {} expired TURN allocations", before - st.allocations.len());
+                info!(
+                    "Cleaned up {} expired TURN allocations",
+                    before - st.allocations.len()
+                );
             }
         }
     });
@@ -207,27 +210,31 @@ async fn handle_allocate(
     let lifetime = requested_lifetime.clamp(60, 3600);
 
     // Assign a relay address.
-    let relay_port = st.relay_socket.local_addr()
-        .map(|a| a.port())
-        .unwrap_or(0);
+    let relay_port = st.relay_socket.local_addr().map(|a| a.port()).unwrap_or(0);
 
     // Use a pseudo-unique port derived from allocation count.
     let alloc_relay_port = relay_port + (st.allocations.len() as u16 % 10000) + 1;
-    let relayed_addr: SocketAddr = format!("0.0.0.0:{}", alloc_relay_port).parse().unwrap_or_else(|_| {
-        format!("0.0.0.0:{}", relay_port).parse().unwrap()
-    });
+    let relayed_addr: SocketAddr = format!("0.0.0.0:{}", alloc_relay_port)
+        .parse()
+        .unwrap_or_else(|_| format!("0.0.0.0:{}", relay_port).parse().unwrap());
 
     metrics::record_turn_allocation();
 
-    st.allocations.insert(*txn_id, TurnAllocation {
-        client_addr: from,
-        relayed_addr,
-        permissions: Vec::new(),
-        channel_bindings: HashMap::new(),
-        expires_at: Instant::now() + Duration::from_secs(lifetime as u64),
-    });
+    st.allocations.insert(
+        *txn_id,
+        TurnAllocation {
+            client_addr: from,
+            relayed_addr,
+            permissions: Vec::new(),
+            channel_bindings: HashMap::new(),
+            expires_at: Instant::now() + Duration::from_secs(lifetime as u64),
+        },
+    );
 
-    info!("TURN allocation created for {} (lifetime {}s)", from, lifetime);
+    info!(
+        "TURN allocation created for {} (lifetime {}s)",
+        from, lifetime
+    );
 
     // Build success response.
     let mut resp = build_response_header(MSG_ALLOCATE_SUCCESS, txn_id);
@@ -336,7 +343,9 @@ async fn handle_send_indication(
     if let (Some(peer), Some(payload)) = (peer_addr, data_attr) {
         let st = state.lock().await;
         // Verify permission.
-        let has_perm = st.allocations.values()
+        let has_perm = st
+            .allocations
+            .values()
             .any(|a| a.client_addr == from && a.permissions.contains(&peer));
 
         if has_perm {
@@ -459,7 +468,9 @@ fn parse_u16_attr(data: &[u8], target_type: u16) -> Option<u16> {
 fn parse_u32_attr(data: &[u8], target_type: u16) -> Option<u32> {
     parse_attr(data, target_type, |payload| {
         if payload.len() >= 4 {
-            Some(u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]))
+            Some(u32::from_be_bytes([
+                payload[0], payload[1], payload[2], payload[3],
+            ]))
         } else {
             None
         }

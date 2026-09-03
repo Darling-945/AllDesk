@@ -11,8 +11,8 @@ use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, CHACHA20_POLY
 use ring::digest::{Context, SHA256};
 use ring::hkdf::Salt;
 
-use alldesk_core::Result;
 use alldesk_core::error::Error;
+use alldesk_core::Result;
 
 /// Tag byte prefixed to encrypted messages to identify the algorithm.
 const ALGO_CHACHA20_POLY1305: u8 = 0x01;
@@ -80,17 +80,17 @@ impl E2ECrypto {
     /// Uses HKDF-SHA256 with the shared secret as input key material,
     /// and `session_id` as the salt. Both sides must use the same
     /// shared secret and session ID to derive the same keys.
-    pub fn new(shared_secret: &[u8], session_id: &[u8], algorithm: CryptoAlgorithm) -> Result<Self> {
+    pub fn new(
+        shared_secret: &[u8],
+        session_id: &[u8],
+        algorithm: CryptoAlgorithm,
+    ) -> Result<Self> {
         let key_material = Self::derive_key(shared_secret, session_id)?;
         let unbound_key = match algorithm {
-            CryptoAlgorithm::ChaCha20Poly1305 => {
-                UnboundKey::new(&CHACHA20_POLY1305, &key_material)
-                    .map_err(|e| Error::Network(format!("create chacha20 key: {}", e)))?
-            }
-            CryptoAlgorithm::Aes256Gcm => {
-                UnboundKey::new(&AES_256_GCM, &key_material)
-                    .map_err(|e| Error::Network(format!("create aes key: {}", e)))?
-            }
+            CryptoAlgorithm::ChaCha20Poly1305 => UnboundKey::new(&CHACHA20_POLY1305, &key_material)
+                .map_err(|e| Error::Network(format!("create chacha20 key: {}", e)))?,
+            CryptoAlgorithm::Aes256Gcm => UnboundKey::new(&AES_256_GCM, &key_material)
+                .map_err(|e| Error::Network(format!("create aes key: {}", e)))?,
         };
 
         // Derive a 4-byte nonce prefix from the session ID for additional domain separation.
@@ -119,7 +119,9 @@ impl E2ECrypto {
         // Use a simple struct to declare our desired output length.
         struct KeyLen;
         impl ring::hkdf::KeyType for KeyLen {
-            fn len(&self) -> usize { KEY_LEN }
+            fn len(&self) -> usize {
+                KEY_LEN
+            }
         }
 
         let okm = prk
@@ -146,7 +148,9 @@ impl E2ECrypto {
     /// Output format: [algo_tag (1)] [counter (8 BE)] [ciphertext+tag]
     /// The counter is included for nonce derivation on the decrypt side.
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let counter = self.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let counter = self
+            .counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nonce = self.make_nonce(counter);
 
         // Build in_out buffer: just the plaintext; seal_in_place_append_tag
@@ -323,8 +327,18 @@ mod tests {
 
     #[test]
     fn test_decrypt_wrong_key_fails() {
-        let crypto1 = E2ECrypto::new(b"key-one-32-bytes-long-padding!!", b"session", CryptoAlgorithm::ChaCha20Poly1305).unwrap();
-        let crypto2 = E2ECrypto::new(b"key-two-32-bytes-long-padding!!", b"session", CryptoAlgorithm::ChaCha20Poly1305).unwrap();
+        let crypto1 = E2ECrypto::new(
+            b"key-one-32-bytes-long-padding!!",
+            b"session",
+            CryptoAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
+        let crypto2 = E2ECrypto::new(
+            b"key-two-32-bytes-long-padding!!",
+            b"session",
+            CryptoAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
         let encrypted = crypto1.encrypt(b"secret").unwrap();
         let result = crypto2.decrypt(&encrypted);
         assert!(result.is_err());
@@ -341,8 +355,18 @@ mod tests {
 
     #[test]
     fn test_same_secret_same_keys() {
-        let c1 = E2ECrypto::new(b"shared-key-32-bytes-long-xxxxx!", b"same-session", CryptoAlgorithm::ChaCha20Poly1305).unwrap();
-        let c2 = E2ECrypto::new(b"shared-key-32-bytes-long-xxxxx!", b"same-session", CryptoAlgorithm::ChaCha20Poly1305).unwrap();
+        let c1 = E2ECrypto::new(
+            b"shared-key-32-bytes-long-xxxxx!",
+            b"same-session",
+            CryptoAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
+        let c2 = E2ECrypto::new(
+            b"shared-key-32-bytes-long-xxxxx!",
+            b"same-session",
+            CryptoAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
         let encrypted = c1.encrypt(b"cross-decrypt").unwrap();
         let decrypted = c2.decrypt(&encrypted).unwrap();
         assert_eq!(&decrypted, b"cross-decrypt");
@@ -350,8 +374,18 @@ mod tests {
 
     #[test]
     fn test_different_sessions_different_keys() {
-        let c1 = E2ECrypto::new(b"shared-key-32-bytes-long-xxxxx!", b"session-1", CryptoAlgorithm::ChaCha20Poly1305).unwrap();
-        let c2 = E2ECrypto::new(b"shared-key-32-bytes-long-xxxxx!", b"session-2", CryptoAlgorithm::ChaCha20Poly1305).unwrap();
+        let c1 = E2ECrypto::new(
+            b"shared-key-32-bytes-long-xxxxx!",
+            b"session-1",
+            CryptoAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
+        let c2 = E2ECrypto::new(
+            b"shared-key-32-bytes-long-xxxxx!",
+            b"session-2",
+            CryptoAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
         let encrypted = c1.encrypt(b"test").unwrap();
         let result = c2.decrypt(&encrypted);
         assert!(result.is_err());
@@ -369,10 +403,19 @@ mod tests {
 
     #[test]
     fn test_algorithm_tag_byte_roundtrip() {
-        assert_eq!(CryptoAlgorithm::ChaCha20Poly1305.tag_byte(), ALGO_CHACHA20_POLY1305);
+        assert_eq!(
+            CryptoAlgorithm::ChaCha20Poly1305.tag_byte(),
+            ALGO_CHACHA20_POLY1305
+        );
         assert_eq!(CryptoAlgorithm::Aes256Gcm.tag_byte(), ALGO_AES_256_GCM);
-        assert_eq!(CryptoAlgorithm::from_tag_byte(0x01), Some(CryptoAlgorithm::ChaCha20Poly1305));
-        assert_eq!(CryptoAlgorithm::from_tag_byte(0x02), Some(CryptoAlgorithm::Aes256Gcm));
+        assert_eq!(
+            CryptoAlgorithm::from_tag_byte(0x01),
+            Some(CryptoAlgorithm::ChaCha20Poly1305)
+        );
+        assert_eq!(
+            CryptoAlgorithm::from_tag_byte(0x02),
+            Some(CryptoAlgorithm::Aes256Gcm)
+        );
         assert_eq!(CryptoAlgorithm::from_tag_byte(0xFF), None);
     }
 }

@@ -6,16 +6,19 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::connection_quality::{ConnectionQuality, QualityCollector};
+use crate::pipeline::{
+    AudioReceiverPipeline, AudioSenderPipeline, ClipboardPipeline, ReceiverPipeline,
+    SenderPipeline, VideoFrame,
+};
+use alldesk_core::adaptive::{AdaptiveController, AdaptiveTargets, LossRateTracker};
 use alldesk_core::config::AppConfig;
-use alldesk_net::{LanDiscovery, QuicEndpoint, Transport};
 use alldesk_net::channel::Channel;
 use alldesk_net::reconnect::ReconnectManager;
-use crate::pipeline::{SenderPipeline, ReceiverPipeline, VideoFrame,
-    AudioSenderPipeline, AudioReceiverPipeline, ClipboardPipeline};
-use crate::connection_quality::{ConnectionQuality, QualityCollector};
+use alldesk_net::{LanDiscovery, QuicEndpoint, Transport};
 
-use alldesk_platform::input::{InputController, MouseButton, ButtonState, KeyCode, KeyState};
 use alldesk_files::transfer::FileTransfer;
+use alldesk_platform::input::{ButtonState, InputController, KeyCode, KeyState, MouseButton};
 use alldesk_recording::Recorder;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -23,6 +26,14 @@ const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
 /// Max automatic reconnect attempts after a connection drop.
 const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+
+/// Adaptive encoding bounds: the control loop moves the encoder bitrate and
+/// capture FPS between these based on observed RTT/loss.
+const ADAPTIVE_INITIAL_BITRATE_KBPS: u32 = 4000;
+const ADAPTIVE_MIN_BITRATE_KBPS: u32 = 500;
+const ADAPTIVE_MAX_BITRATE_KBPS: u32 = 8000;
+const ADAPTIVE_MIN_FPS: u32 = 5;
+const ADAPTIVE_MAX_FPS: u32 = 30;
 
 /// Get the library version
 pub fn get_version() -> String {
@@ -51,9 +62,7 @@ pub enum SessionState {
 static PEER_ID: OnceLock<String> = OnceLock::new();
 
 fn ensure_peer_id() -> &'static str {
-    PEER_ID.get_or_init(|| {
-        AppConfig::default().peer_id
-    })
+    PEER_ID.get_or_init(|| AppConfig::default().peer_id)
 }
 
 // ---------- Shared runtime state ----------
@@ -108,8 +117,10 @@ struct CachedPeer {
 static APP_STATE: OnceLock<RwLock<AppState>> = OnceLock::new();
 
 // Separate fine-grained locks to avoid contention between frame polling and input sending.
-static FRAME_RX: OnceLock<Mutex<Option<tokio::sync::broadcast::Receiver<VideoFrame>>>> = OnceLock::new();
-static INPUT_TRANSPORT: OnceLock<Mutex<Option<alldesk_net::transport::QuicTransport>>> = OnceLock::new();
+static FRAME_RX: OnceLock<Mutex<Option<tokio::sync::broadcast::Receiver<VideoFrame>>>> =
+    OnceLock::new();
+static INPUT_TRANSPORT: OnceLock<Mutex<Option<alldesk_net::transport::QuicTransport>>> =
+    OnceLock::new();
 /// Viewer-side session recorder (set by start_session_recording).
 static RECORDER: OnceLock<Mutex<Option<Arc<std::sync::Mutex<Recorder>>>>> = OnceLock::new();
 
@@ -216,12 +227,7 @@ pub async fn init() -> String {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<alldesk_net::PeerDiscovered>(32);
 
         tokio::spawn(async move {
-            if let Err(e) = LanDiscovery::discover_loop(
-                peer_id,
-                peer_name,
-                21116,
-                tx,
-            ).await {
+            if let Err(e) = LanDiscovery::discover_loop(peer_id, peer_name, 21116, tx).await {
                 tracing::error!("discovery loop error: {}", e);
             }
         });
@@ -233,7 +239,11 @@ pub async fn init() -> String {
                 address: peer.addr.to_string(),
             };
             let mut state = app_state().write().await;
-            if let Some(existing) = state.discovered_peers.iter_mut().find(|p| p.peer_id == cached.peer_id) {
+            if let Some(existing) = state
+                .discovered_peers
+                .iter_mut()
+                .find(|p| p.peer_id == cached.peer_id)
+            {
                 *existing = cached;
             } else {
                 tracing::info!("discovered peer: {} @ {}", cached.peer_name, cached.address);
@@ -251,10 +261,7 @@ pub async fn discover_peers(timeout_secs: u64) -> Vec<PeerInfo> {
     // Active scan on explicit request
     if timeout_secs > 0 {
         let discovery = LanDiscovery::new(21116);
-        match tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
-            discovery.discover(),
-        ).await {
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), discovery.discover()).await {
             Ok(Ok(peers)) => {
                 let mut state = app_state().write().await;
                 for peer in peers {
@@ -263,8 +270,11 @@ pub async fn discover_peers(timeout_secs: u64) -> Vec<PeerInfo> {
                         peer_name: peer.peer_name.clone(),
                         address: peer.addr.to_string(),
                     };
-                    if let Some(existing) = state.discovered_peers.iter_mut()
-                        .find(|p| p.peer_id == cached.peer_id) {
+                    if let Some(existing) = state
+                        .discovered_peers
+                        .iter_mut()
+                        .find(|p| p.peer_id == cached.peer_id)
+                    {
                         *existing = cached;
                     } else {
                         state.discovered_peers.push(cached);
@@ -277,11 +287,15 @@ pub async fn discover_peers(timeout_secs: u64) -> Vec<PeerInfo> {
     }
 
     let state = app_state().read().await;
-    state.discovered_peers.iter().map(|p| PeerInfo {
-        peer_id: p.peer_id.clone(),
-        peer_name: p.peer_name.clone(),
-        address: p.address.clone(),
-    }).collect()
+    state
+        .discovered_peers
+        .iter()
+        .map(|p| PeerInfo {
+            peer_id: p.peer_id.clone(),
+            peer_name: p.peer_name.clone(),
+            address: p.address.clone(),
+        })
+        .collect()
 }
 
 async fn start_server_internal(
@@ -295,7 +309,8 @@ async fn start_server_internal(
     let endpoint = QuicEndpoint::new_server(bind_addr)
         .map_err(|e| format!("failed to create server: {}", e))?;
 
-    let local = endpoint.local_addr()
+    let local = endpoint
+        .local_addr()
         .map_err(|e| format!("failed to get local addr: {}", e))?;
 
     // Signal that the server is now listening
@@ -314,25 +329,55 @@ async fn start_server_internal(
                     // All pipelines on this connection share one stream table
                     // so their accept_channel() calls don't steal each
                     // other's streams.
-                    let video_transport = alldesk_net::transport::QuicTransport::new(conn.clone(), true);
+                    let video_transport =
+                        alldesk_net::transport::QuicTransport::new(conn.clone(), true);
                     let shared_streams = video_transport.shared_streams();
-                    let audio_host_transport = alldesk_net::transport::QuicTransport::with_shared_streams(
-                        conn.clone(), true, shared_streams.clone());
-                    let clipboard_host_transport = alldesk_net::transport::QuicTransport::with_shared_streams(
-                        conn.clone(), true, shared_streams.clone());
-                    let file_host_transport = alldesk_net::transport::QuicTransport::with_shared_streams(
-                        conn.clone(), true, shared_streams.clone());
-                    let input_conn = conn;
+                    let audio_host_transport =
+                        alldesk_net::transport::QuicTransport::with_shared_streams(
+                            conn.clone(),
+                            true,
+                            shared_streams.clone(),
+                        );
+                    let clipboard_host_transport =
+                        alldesk_net::transport::QuicTransport::with_shared_streams(
+                            conn.clone(),
+                            true,
+                            shared_streams.clone(),
+                        );
+                    let file_host_transport =
+                        alldesk_net::transport::QuicTransport::with_shared_streams(
+                            conn.clone(),
+                            true,
+                            shared_streams.clone(),
+                        );
 
                     // Start input handler concurrently (host-side: receive viewer input → inject to OS)
+                    let input_conn = conn.clone();
                     let input_handle = tokio::spawn(run_input_handler(input_conn, shared_streams));
 
-                    // Start sender pipeline concurrently (capture → send raw BGRA to viewer)
+                    // Adaptive encoding: sample RTT/loss every second and
+                    // publish new bitrate/FPS targets to the sender pipeline.
+                    let (adapt_tx, adapt_rx) = tokio::sync::watch::channel(AdaptiveTargets {
+                        bitrate_kbps: ADAPTIVE_INITIAL_BITRATE_KBPS,
+                        fps: ADAPTIVE_MAX_FPS,
+                    });
+                    let adaptive_conn = conn.clone();
+                    let adaptive_handle =
+                        tokio::spawn(run_adaptive_controller(adaptive_conn, adapt_tx));
+
+                    // Start sender pipeline concurrently (capture → VP9 → viewer)
                     let sender_handle = tokio::spawn(async move {
                         tracing::info!("initializing sender pipeline...");
-                        match SenderPipeline::new(video_transport, 4000, 30).await {
-                            Ok(mut pipeline) => {
+                        match SenderPipeline::new(
+                            video_transport,
+                            ADAPTIVE_INITIAL_BITRATE_KBPS,
+                            ADAPTIVE_MAX_FPS,
+                        )
+                        .await
+                        {
+                            Ok(pipeline) => {
                                 tracing::info!("sender pipeline started, beginning capture loop");
+                                let mut pipeline = pipeline.with_adaptive(adapt_rx);
                                 if let Err(e) = pipeline.run().await {
                                     tracing::error!("sender pipeline error: {}", e);
                                 }
@@ -380,7 +425,14 @@ async fn start_server_internal(
                     });
 
                     // Wait for all tasks
-                    let _ = tokio::join!(sender_handle, input_handle, audio_sender_handle, clipboard_handle, file_handle);
+                    let _ = tokio::join!(
+                        sender_handle,
+                        input_handle,
+                        audio_sender_handle,
+                        clipboard_handle,
+                        file_handle,
+                        adaptive_handle
+                    );
                     tracing::info!("viewer session ended");
                 }
                 Err(e) => {
@@ -415,7 +467,8 @@ pub async fn start_server(port: u16) -> Result<String, String> {
 
 /// Connect to a remote peer via QUIC and start the receiver pipeline.
 pub async fn connect_to_peer(addr: String) -> Result<String, String> {
-    let remote: SocketAddr = addr.parse()
+    let remote: SocketAddr = addr
+        .parse()
         .map_err(|e| format!("invalid address '{}': {}", addr, e))?;
 
     let endpoint = QuicEndpoint::new_client()
@@ -424,8 +477,7 @@ pub async fn connect_to_peer(addr: String) -> Result<String, String> {
     // Retry loop with timeout on each attempt for the INITIAL connection;
     // later drops are handled by the reconnect supervisor.
     let reconnect = Arc::new(
-        ReconnectManager::new(endpoint.clone(), remote)
-            .with_max_attempts(MAX_RECONNECT_ATTEMPTS),
+        ReconnectManager::new(endpoint.clone(), remote).with_max_attempts(MAX_RECONNECT_ATTEMPTS),
     );
     let mut last_err = String::new();
     for attempt in 1..=MAX_RETRIES {
@@ -439,13 +491,19 @@ pub async fn connect_to_peer(addr: String) -> Result<String, String> {
                 }
                 drop(state);
 
-                install_viewer_session(reconnect.clone(), endpoint.clone(), conn.clone(), addr.clone()).await;
+                install_viewer_session(
+                    reconnect.clone(),
+                    endpoint.clone(),
+                    conn.clone(),
+                    addr.clone(),
+                )
+                .await;
 
                 // Watch the connection and rebuild the session after drops.
                 let generation = app_state().read().await.session_generation;
-                app_state().write().await.reconnect_task = Some(tokio::spawn(supervise_connection(
-                    reconnect, endpoint, conn, addr.clone(), generation,
-                )));
+                app_state().write().await.reconnect_task = Some(tokio::spawn(
+                    supervise_connection(reconnect, endpoint, conn, addr.clone(), generation),
+                ));
                 tracing::info!("connected to {}", addr);
                 return Ok(format!("connected to {}", addr));
             }
@@ -454,7 +512,10 @@ pub async fn connect_to_peer(addr: String) -> Result<String, String> {
                 tracing::warn!("connect attempt {}/{}: {}", attempt, MAX_RETRIES, last_err);
             }
             Err(_) => {
-                last_err = format!("connection to {} timed out after {:?}", addr, CONNECT_TIMEOUT);
+                last_err = format!(
+                    "connection to {} timed out after {:?}",
+                    addr, CONNECT_TIMEOUT
+                );
                 tracing::warn!("connect attempt {}/{}: timed out", attempt, MAX_RETRIES);
             }
         }
@@ -488,11 +549,17 @@ async fn install_viewer_session(
     });
 
     let input_transport = alldesk_net::transport::QuicTransport::with_shared_streams(
-        conn.clone(), true, shared_streams.clone());
+        conn.clone(),
+        true,
+        shared_streams.clone(),
+    );
 
     // Audio receiver (viewer speaker ← host mic)
     let audio_viewer_transport = alldesk_net::transport::QuicTransport::with_shared_streams(
-        conn.clone(), true, shared_streams.clone());
+        conn.clone(),
+        true,
+        shared_streams.clone(),
+    );
     let audio_receiver_task = tokio::spawn(async move {
         let mut pipeline = AudioReceiverPipeline::new(audio_viewer_transport);
         tracing::info!("audio receiver pipeline starting");
@@ -504,7 +571,10 @@ async fn install_viewer_session(
 
     // Clipboard sync (bidirectional, viewer side)
     let clipboard_viewer_transport = alldesk_net::transport::QuicTransport::with_shared_streams(
-        conn.clone(), true, shared_streams.clone());
+        conn.clone(),
+        true,
+        shared_streams.clone(),
+    );
     let clipboard_task = tokio::spawn(async move {
         match ClipboardPipeline::new(clipboard_viewer_transport, true) {
             Ok(mut pipeline) => {
@@ -534,8 +604,15 @@ async fn install_viewer_session(
     // Abort stale pipeline tasks from a previous session. The old supervisor
     // is NOT aborted here — it may be our caller; it exits on its own via the
     // generation check below.
-    for h in [&state.receiver_task, &state.audio_receiver_task,
-              &state.clipboard_task, &state.quality_task].into_iter().flatten() {
+    for h in [
+        &state.receiver_task,
+        &state.audio_receiver_task,
+        &state.clipboard_task,
+        &state.quality_task,
+    ]
+    .into_iter()
+    .flatten()
+    {
         h.abort();
     }
     state.session_generation += 1;
@@ -581,7 +658,11 @@ async fn supervise_connection(
         loop {
             let (still_connected, was_active, current_gen) = {
                 let state = app_state().read().await;
-                (state.client.is_some(), state.video_active, state.session_generation)
+                (
+                    state.client.is_some(),
+                    state.video_active,
+                    state.session_generation,
+                )
             };
 
             // User called disconnect() or a newer session took over (manual
@@ -597,8 +678,12 @@ async fn supervise_connection(
                 Ok(new_conn) => {
                     tracing::info!("reconnected to {}", remote_addr);
                     install_viewer_session(
-                        reconnect.clone(), endpoint.clone(), new_conn.clone(), remote_addr.clone(),
-                    ).await;
+                        reconnect.clone(),
+                        endpoint.clone(),
+                        new_conn.clone(),
+                        remote_addr.clone(),
+                    )
+                    .await;
                     conn = new_conn;
                     generation = app_state().read().await.session_generation;
                     break; // back to watching the new connection
@@ -638,6 +723,59 @@ async fn run_quality_sampler(
             q.record_rtt(stats.path.rtt.as_secs_f64() * 1000.0);
             q.record_packet_counts(stats.path.sent_packets, stats.path.lost_packets);
             q.set_bandwidth(bandwidth_kbps);
+        }
+    }
+}
+
+/// Host-side adaptive control loop: once per second, read the connection's
+/// RTT and per-interval packet loss and publish new encoder/pacing targets
+/// to the sender pipeline. Exits when the connection closes or the pipeline
+/// (the watch receiver) is gone.
+async fn run_adaptive_controller(
+    conn: quinn::Connection,
+    tx: tokio::sync::watch::Sender<AdaptiveTargets>,
+) {
+    let mut controller = AdaptiveController::new(
+        ADAPTIVE_INITIAL_BITRATE_KBPS,
+        ADAPTIVE_MIN_BITRATE_KBPS,
+        ADAPTIVE_MAX_BITRATE_KBPS,
+        ADAPTIVE_MIN_FPS,
+        ADAPTIVE_MAX_FPS,
+    );
+    let mut loss = LossRateTracker::new();
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // The channel is initialized with the same targets; only publish deltas.
+    let mut last_sent = AdaptiveTargets {
+        bitrate_kbps: ADAPTIVE_INITIAL_BITRATE_KBPS,
+        fps: ADAPTIVE_MAX_FPS,
+    };
+
+    loop {
+        tick.tick().await;
+        if conn.close_reason().is_some() {
+            return;
+        }
+
+        let stats = conn.stats();
+        let rtt_ms = stats.path.rtt.as_secs_f64() * 1000.0;
+        let loss_rate = loss.update(stats.path.sent_packets, stats.path.lost_packets);
+
+        let targets = controller.update(rtt_ms, loss_rate);
+        tracing::debug!(
+            rtt_ms = rtt_ms as u64,
+            loss_rate,
+            bitrate_kbps = targets.bitrate_kbps,
+            fps = targets.fps,
+            "adaptive sample"
+        );
+        // Send only on change so the pipeline's has_changed() check doesn't
+        // wake it with identical targets every second.
+        if targets != last_sent {
+            last_sent = targets;
+            if tx.send(targets).is_err() {
+                return; // sender pipeline is gone — session over
+            }
         }
     }
 }
@@ -757,11 +895,11 @@ pub async fn run_diagnostics() -> String {
 
 fn local_ip_addresses() -> Result<Vec<String>, String> {
     let mut ips = Vec::new();
-    let sock = std::net::UdpSocket::bind("0.0.0.0:0")
-        .map_err(|e| format!("bind: {}", e))?;
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("bind: {}", e))?;
     sock.connect("8.8.8.8:80")
         .map_err(|e| format!("connect: {}", e))?;
-    let local = sock.local_addr()
+    let local = sock
+        .local_addr()
         .map_err(|e| format!("local_addr: {}", e))?;
     ips.push(local.ip().to_string());
     Ok(ips)
@@ -782,8 +920,12 @@ async fn record_pipeline_error(msg: String) {
 }
 
 /// Receive input events from the viewer and inject them into the local OS.
-async fn run_input_handler(conn: quinn::Connection, streams: alldesk_net::transport::SharedStreams) {
-    let mut transport = alldesk_net::transport::QuicTransport::with_shared_streams(conn, true, streams);
+async fn run_input_handler(
+    conn: quinn::Connection,
+    streams: alldesk_net::transport::SharedStreams,
+) {
+    let mut transport =
+        alldesk_net::transport::QuicTransport::with_shared_streams(conn, true, streams);
 
     // Wait for the Input stream opened by the viewer (may happen only when
     // the user first moves the mouse, so no timeout). Streams for sibling
@@ -903,7 +1045,9 @@ fn handle_key_event(controller: &dyn InputController, msg: &[u8]) {
     match key_type {
         0x01 => {
             // Unicode char
-            if msg.len() < 7 { return; }
+            if msg.len() < 7 {
+                return;
+            }
             let code_point = u32::from_le_bytes(msg[3..7].try_into().unwrap());
             if let Some(ch) = char::from_u32(code_point) {
                 if state == KeyState::Pressed {
@@ -915,7 +1059,9 @@ fn handle_key_event(controller: &dyn InputController, msg: &[u8]) {
         }
         0x02 => {
             // Special key
-            if msg.len() < 4 { return; }
+            if msg.len() < 4 {
+                return;
+            }
             let key = decode_special_key(msg[3]);
             if let Err(e) = controller.key_event(key, state) {
                 tracing::warn!("key_event: {}", e);
@@ -987,9 +1133,14 @@ pub async fn send_mouse_event(x: f64, y: f64, action: String) -> Result<(), Stri
     msg.extend_from_slice(action_bytes);
 
     // Take the transport out, send without holding the lock, then put it back.
-    let mut transport = input_transport_lock().lock().await.take()
+    let mut transport = input_transport_lock()
+        .lock()
+        .await
+        .take()
         .ok_or_else(|| "not connected".to_string())?;
-    let result = transport.send(Channel::Input, &msg).await
+    let result = transport
+        .send(Channel::Input, &msg)
+        .await
         .map_err(|e| format!("send mouse: {}", e));
     input_transport_lock().lock().await.replace(transport);
     result
@@ -1001,9 +1152,14 @@ pub async fn send_scroll(dy: f64) -> Result<(), String> {
     msg.push(0x02);
     msg.extend_from_slice(&dy.to_le_bytes());
 
-    let mut transport = input_transport_lock().lock().await.take()
+    let mut transport = input_transport_lock()
+        .lock()
+        .await
+        .take()
         .ok_or_else(|| "not connected".to_string())?;
-    let result = transport.send(Channel::Input, &msg).await
+    let result = transport
+        .send(Channel::Input, &msg)
+        .await
         .map_err(|e| format!("send scroll: {}", e));
     input_transport_lock().lock().await.replace(transport);
     result
@@ -1030,9 +1186,14 @@ pub async fn send_key_event(key_type: String, key: u32, pressed: bool) -> Result
         _ => return Err(format!("unknown key_type: {}", key_type)),
     }
 
-    let mut transport = input_transport_lock().lock().await.take()
+    let mut transport = input_transport_lock()
+        .lock()
+        .await
+        .take()
         .ok_or_else(|| "not connected".to_string())?;
-    let result = transport.send(Channel::Input, &msg).await
+    let result = transport
+        .send(Channel::Input, &msg)
+        .await
         .map_err(|e| format!("send key: {}", e));
     input_transport_lock().lock().await.replace(transport);
     result
@@ -1048,7 +1209,9 @@ pub async fn get_connection_quality() -> String {
     let video_active = state.video_active;
     let frames_received = state.frames_received;
     let last_error = state.last_pipeline_error.clone();
-    let quality: ConnectionQuality = state.quality.lock()
+    let quality: ConnectionQuality = state
+        .quality
+        .lock()
         .map(|mut q| q.compute_quality())
         .unwrap_or(ConnectionQuality {
             rtt_ms: 0.0,
@@ -1063,12 +1226,20 @@ pub async fn get_connection_quality() -> String {
 
     let rx_count = {
         let rx_guard = frame_rx_lock().lock().await;
-        if rx_guard.is_some() { "active" } else { "none" }
+        if rx_guard.is_some() {
+            "active"
+        } else {
+            "none"
+        }
     };
 
     let input_ok = {
         let inp_guard = input_transport_lock().lock().await;
-        if inp_guard.is_some() { "active" } else { "none" }
+        if inp_guard.is_some() {
+            "active"
+        } else {
+            "none"
+        }
     };
 
     serde_json::json!({
@@ -1084,7 +1255,8 @@ pub async fn get_connection_quality() -> String {
         "quality": format!("{:?}", quality.quality),
         "frames_dropped": quality.frames_dropped,
         "last_error": last_error,
-    }).to_string()
+    })
+    .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,9 +1283,22 @@ fn sanitize_remote_filename(name: &str) -> String {
     let stripped = name.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = stripped
         .chars()
-        .filter(|c| !c.is_control() && *c != ':' && *c != '*' && *c != '?' && *c != '"' && *c != '<' && *c != '>' && *c != '|')
+        .filter(|c| {
+            !c.is_control()
+                && *c != ':'
+                && *c != '*'
+                && *c != '?'
+                && *c != '"'
+                && *c != '<'
+                && *c != '>'
+                && *c != '|'
+        })
         .collect();
-    if cleaned.is_empty() { "received_file".into() } else { cleaned }
+    if cleaned.is_empty() {
+        "received_file".into()
+    } else {
+        cleaned
+    }
 }
 
 /// Host side: receive files pushed by the viewer, writing them to
@@ -1146,10 +1331,13 @@ async fn run_file_receiver(mut transport: alldesk_net::transport::QuicTransport)
                     tracing::warn!("malformed file header");
                     continue;
                 }
-                let name = sanitize_remote_filename(
-                    &String::from_utf8_lossy(&msg[3..3 + name_len]));
+                let name =
+                    sanitize_remote_filename(&String::from_utf8_lossy(&msg[3..3 + name_len]));
                 let total = u64::from_le_bytes(
-                    msg[3 + name_len..3 + name_len + 8].try_into().unwrap_or([0; 8]));
+                    msg[3 + name_len..3 + name_len + 8]
+                        .try_into()
+                        .unwrap_or([0; 8]),
+                );
 
                 let dir = received_files_dir();
                 if let Err(e) = tokio::fs::create_dir_all(&dir).await {
@@ -1159,8 +1347,12 @@ async fn run_file_receiver(mut transport: alldesk_net::transport::QuicTransport)
                 let dest = dir.join(&name);
                 match tokio::fs::File::create(&dest).await {
                     Ok(f) => {
-                        tracing::info!("receiving '{}' ({} bytes) -> {}",
-                            name, total, dest.display());
+                        tracing::info!(
+                            "receiving '{}' ({} bytes) -> {}",
+                            name,
+                            total,
+                            dest.display()
+                        );
                         if let Ok(mut state) = app_state().try_write() {
                             state.file_progress = FileTransferProgress {
                                 active: true,
@@ -1179,7 +1371,8 @@ async fn run_file_receiver(mut transport: alldesk_net::transport::QuicTransport)
             FILE_MSG_CHUNK => {
                 if let Some((_, total, file)) = current.as_mut() {
                     let data = &msg[1..];
-                    if let Err(e) = file.write_all(data).await { // tokio::io::AsyncWriteExt
+                    if let Err(e) = file.write_all(data).await {
+                        // tokio::io::AsyncWriteExt
                         tracing::error!("write chunk: {}", e);
                         current = None;
                         continue;
@@ -1210,7 +1403,10 @@ async fn run_file_receiver(mut transport: alldesk_net::transport::QuicTransport)
 pub async fn send_file_to_peer(path: String) -> Result<String, String> {
     let file_transport = {
         let guard = input_transport_lock().lock().await;
-        guard.as_ref().cloned().ok_or_else(|| "not connected".to_string())?
+        guard
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "not connected".to_string())?
     };
 
     let filename = std::path::Path::new(&path)
@@ -1218,7 +1414,8 @@ pub async fn send_file_to_peer(path: String) -> Result<String, String> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".into());
 
-    let meta = tokio::fs::metadata(&path).await
+    let meta = tokio::fs::metadata(&path)
+        .await
         .map_err(|e| format!("cannot read '{}': {}", path, e))?;
     let total = meta.len();
 
@@ -1271,14 +1468,16 @@ async fn send_file_session(
     transport.send(Channel::File, &header).await?;
 
     let transfer = FileTransfer::new();
-    transfer.send_file(path, |chunk| {
-        let mut msg = Vec::with_capacity(9 + chunk.data.len());
-        msg.push(FILE_MSG_CHUNK);
-        msg.extend_from_slice(&chunk.index.to_le_bytes());
-        msg.extend_from_slice(&chunk.data);
-        let mut t = transport.clone();
-        async move { t.send(Channel::File, &msg).await }
-    }).await?;
+    transfer
+        .send_file(path, |chunk| {
+            let mut msg = Vec::with_capacity(9 + chunk.data.len());
+            msg.push(FILE_MSG_CHUNK);
+            msg.extend_from_slice(&chunk.index.to_le_bytes());
+            msg.extend_from_slice(&chunk.data);
+            let mut t = transport.clone();
+            async move { t.send(Channel::File, &msg).await }
+        })
+        .await?;
 
     transport.send(Channel::File, &[FILE_MSG_END]).await?;
     tracing::info!("sent '{}' ({} bytes)", filename, total);
@@ -1298,13 +1497,15 @@ pub async fn get_file_transfer_status() -> String {
 
 /// The recorder attached to the live receiver pipeline, if recording.
 pub(crate) fn current_recorder() -> Option<Arc<std::sync::Mutex<Recorder>>> {
-    recorder_lock().try_lock().ok().and_then(|guard| guard.clone())
+    recorder_lock()
+        .try_lock()
+        .ok()
+        .and_then(|guard| guard.clone())
 }
 
 /// Start recording the remote session (VP9-encoded frames) to `path`.
 pub async fn start_session_recording(path: String) -> Result<String, String> {
-    let recorder = Recorder::new(&path)
-        .map_err(|e| format!("cannot create '{}': {}", path, e))?;
+    let recorder = Recorder::new(&path).map_err(|e| format!("cannot create '{}': {}", path, e))?;
     *recorder_lock().lock().await = Some(Arc::new(std::sync::Mutex::new(recorder)));
     tracing::info!("session recording started: {}", path);
     Ok(format!("recording to {}", path))
@@ -1312,14 +1513,19 @@ pub async fn start_session_recording(path: String) -> Result<String, String> {
 
 /// Stop recording and finalize the file. Returns the output path.
 pub async fn stop_session_recording() -> Result<String, String> {
-    let rec = recorder_lock().lock().await.take()
+    let rec = recorder_lock()
+        .lock()
+        .await
+        .take()
         .ok_or_else(|| "not recording".to_string())?;
     let recorder = Arc::try_unwrap(rec)
         .map_err(|_| "recorder still in use".to_string())?
         .into_inner()
         .map_err(|_| "recorder lock poisoned".to_string())?;
     let frames = recorder.frame_count();
-    recorder.finish().map_err(|e| format!("finalize recording: {}", e))?;
+    recorder
+        .finish()
+        .map_err(|e| format!("finalize recording: {}", e))?;
     tracing::info!("session recording stopped ({} frames)", frames);
     Ok(format!("saved {} frames", frames))
 }

@@ -4,9 +4,9 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use alldesk_core::Result;
-use alldesk_core::error::Error;
 use crate::quic_conn::QuicEndpoint;
+use alldesk_core::error::Error;
+use alldesk_core::Result;
 
 /// Maximum number of reconnection attempts before giving up.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
@@ -119,7 +119,10 @@ impl ReconnectManager {
         let mut delay = self.initial_backoff;
 
         for attempt in 1..=self.max_attempts {
-            debug!("Reconnect attempt {}/{} to {}", attempt, self.max_attempts, self.remote_addr);
+            debug!(
+                "Reconnect attempt {}/{} to {}",
+                attempt, self.max_attempts, self.remote_addr
+            );
 
             tokio::time::sleep(delay).await;
 
@@ -267,9 +270,7 @@ mod tests {
         let mgr = ReconnectManager::new(endpoint, addr);
 
         // Accept on server side
-        let server_handle = tokio::spawn(async move {
-            server.accept().await.unwrap()
-        });
+        let server_handle = tokio::spawn(async move { server.accept().await.unwrap() });
 
         let conn = mgr.connect().await.unwrap();
         let _server_conn = server_handle.await.unwrap();

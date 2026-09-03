@@ -1,11 +1,11 @@
 use alldesk_capture::capture::{CaptureConfig, CaptureProvider, CapturedFrame, FrameData};
-use alldesk_platform::audio::{AudioCapturer, AudioPlayer};
-use alldesk_platform::clipboard::{ClipboardMonitor, ClipboardSync};
 use alldesk_core::Result;
 use alldesk_net::channel::Channel;
 use alldesk_net::flow::{FlowConfig, FlowController};
 use alldesk_net::transport::QuicTransport;
 use alldesk_net::Transport;
+use alldesk_platform::audio::{AudioCapturer, AudioPlayer};
+use alldesk_platform::clipboard::{ClipboardMonitor, ClipboardSync};
 use alldesk_recording::Recorder;
 use tokio::sync::broadcast;
 
@@ -15,9 +15,9 @@ use alldesk_capture::dxgi::DxgiCapturer;
 #[cfg(target_os = "android")]
 use alldesk_capture::android::AndroidCapturer;
 
-use alldesk_codec::encoder::{Codec, EncodedPacket, VideoEncoder};
 use alldesk_codec::decoder::VideoDecoder;
-use alldesk_codec::vp9::{Vp9Encoder, Vp9Decoder};
+use alldesk_codec::encoder::{Codec, EncodedPacket, VideoEncoder};
+use alldesk_codec::vp9::{Vp9Decoder, Vp9Encoder};
 
 const FRAME_TYPE_RAW: u8 = 0x00;
 const FRAME_TYPE_VP9: u8 = 0x01;
@@ -35,13 +35,24 @@ pub struct SenderPipeline {
     capturer: Box<dyn CaptureProvider>,
     transport: QuicTransport,
     fps: u32,
+    /// Current encoder bitrate, tracked so adaptive updates that don't change
+    /// it skip the libvpx reconfiguration.
+    bitrate_kbps: u32,
     encoder: Option<Vp9Encoder>,
     /// Bounded send queue: when the network can't keep up, stale frames are
     /// dropped instead of unbounded buffering.
     flow: FlowController,
+    /// New encoder/pacing targets from the adaptive controller task, if one
+    /// is attached to this session.
+    adaptive: Option<tokio::sync::watch::Receiver<alldesk_core::adaptive::AdaptiveTargets>>,
 }
 
 unsafe impl Send for SenderPipeline {}
+
+/// Give up on the session after this many consecutive transport failures
+/// (≈2 s at 30 fps). Without it the capture/encode loop would keep running —
+/// and logging a warning per frame — long after the viewer disconnected.
+const MAX_CONSECUTIVE_SEND_ERRORS: u32 = 60;
 
 impl SenderPipeline {
     pub async fn new(transport: QuicTransport, bitrate_kbps: u32, fps: u32) -> Result<Self> {
@@ -62,15 +73,22 @@ impl SenderPipeline {
         }
         let mon = &monitors[0];
 
-        capturer.start_capture(CaptureConfig {
-            monitor_id: mon.id,
-            fps,
-            show_cursor: true,
-        }).await?;
+        capturer
+            .start_capture(CaptureConfig {
+                monitor_id: mon.id,
+                fps,
+                show_cursor: true,
+            })
+            .await?;
 
         let encoder = match Vp9Encoder::new(mon.width, mon.height, bitrate_kbps, fps) {
             Ok(enc) => {
-                tracing::info!("VP9 encoder initialized ({}x{} @ {}kbps)", mon.width, mon.height, bitrate_kbps);
+                tracing::info!(
+                    "VP9 encoder initialized ({}x{} @ {}kbps)",
+                    mon.width,
+                    mon.height,
+                    bitrate_kbps
+                );
                 Some(enc)
             }
             Err(e) => {
@@ -79,7 +97,50 @@ impl SenderPipeline {
             }
         };
 
-        Ok(Self { capturer, transport, fps, encoder, flow: Self::build_flow(mon.width, mon.height) })
+        Ok(Self {
+            capturer,
+            transport,
+            fps,
+            bitrate_kbps,
+            encoder,
+            flow: Self::build_flow(mon.width, mon.height),
+            adaptive: None,
+        })
+    }
+
+    /// Subscribe the pipeline to adaptive encoder/pacing targets.
+    pub fn with_adaptive(
+        mut self,
+        targets: tokio::sync::watch::Receiver<alldesk_core::adaptive::AdaptiveTargets>,
+    ) -> Self {
+        self.adaptive = Some(targets);
+        self
+    }
+
+    /// Apply new adaptive targets to the encoder and the capture pacing.
+    /// Reconfigures only when a value actually changed. Pacing picks the new
+    /// FPS up on the next `run()` tick (the scheduler re-reads `self.fps`).
+    fn apply_adaptive_targets(&mut self, targets: alldesk_core::adaptive::AdaptiveTargets) {
+        let new_bitrate = targets.bitrate_kbps;
+        // The controller guarantees fps ≥ 1; clamp defensively anyway since
+        // pacing divides by it.
+        let new_fps = targets.fps.max(1);
+        let bitrate_changed = new_bitrate != self.bitrate_kbps;
+        let fps_changed = new_fps != self.fps;
+        if !bitrate_changed && !fps_changed {
+            return;
+        }
+
+        if let Some(encoder) = self.encoder.as_mut() {
+            encoder.reconfigure(new_bitrate, new_fps);
+        }
+        self.bitrate_kbps = new_bitrate;
+        self.fps = new_fps;
+        tracing::info!(
+            "adaptive targets applied: {} kbps @ {} fps",
+            new_bitrate,
+            new_fps
+        );
     }
 
     /// Flow control sized for this stream: messages up to one raw frame,
@@ -95,25 +156,53 @@ impl SenderPipeline {
 
     /// Enqueue one video message, dropping it (or stale queued frames) when
     /// the network is backpressured, then drain everything that survived.
-    async fn send_video_message(&mut self, data: Vec<u8>) {
+    /// Returns the first transport error so the caller can count failures.
+    async fn send_video_message(&mut self, data: Vec<u8>) -> Result<()> {
         if !self.flow.try_send(Channel::Video, data) {
             // Queue full: drop this frame — real-time video prefers fresh.
-            return;
+            // Backpressure is not a connection error, so report success.
+            return Ok(());
         }
         while let Some((channel, data)) = self.flow.poll_send() {
             if let Err(e) = self.transport.send(channel, &data).await {
                 tracing::warn!("send video: {}", e);
+                return Err(e);
             }
         }
+        Ok(())
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let interval = std::time::Duration::from_millis(1000 / self.fps as u64);
-        let mut tick = tokio::time::interval(interval);
         let mut consecutive_errors = 0u32;
+        let mut consecutive_send_errors = 0u32;
+        // Fixed-rate scheduler over sleep_until instead of tokio::time::interval:
+        // the period must follow the adaptive FPS, and Interval's period
+        // can't be changed after creation.
+        let mut next_tick = tokio::time::Instant::now();
 
         loop {
-            tick.tick().await;
+            let period = std::time::Duration::from_millis(1000 / self.fps.max(1) as u64);
+            next_tick += period;
+            // Behind schedule (slow capture/encode): skip missed ticks
+            // rather than bursting — real-time video prefers fresh frames.
+            let now = tokio::time::Instant::now();
+            if next_tick <= now {
+                next_tick = now + period;
+            }
+            tokio::time::sleep_until(next_tick).await;
+
+            // Apply the newest adaptive target, if any (coalesce a burst of
+            // updates into the latest one).
+            let newest_target = self.adaptive.as_mut().and_then(|rx| {
+                let mut latest = None;
+                while rx.has_changed().unwrap_or(false) {
+                    latest = Some(*rx.borrow_and_update());
+                }
+                latest
+            });
+            if let Some(targets) = newest_target {
+                self.apply_adaptive_targets(targets);
+            }
 
             match self.capturer.next_frame().await {
                 Ok(Some(frame)) => {
@@ -125,6 +214,12 @@ impl SenderPipeline {
                                 for pkt in packets {
                                     if let Err(e) = self.send_vpx_frame(&frame, &pkt).await {
                                         tracing::warn!("send vp9: {}", e);
+                                        consecutive_send_errors += 1;
+                                        if consecutive_send_errors > MAX_CONSECUTIVE_SEND_ERRORS {
+                                            return Err(e);
+                                        }
+                                    } else {
+                                        consecutive_send_errors = 0;
                                     }
                                 }
                                 continue;
@@ -134,7 +229,16 @@ impl SenderPipeline {
                             }
                         }
                     }
-                    let _ = self.send_raw_frame(&frame).await;
+                    match self.send_raw_frame(&frame).await {
+                        Ok(()) => consecutive_send_errors = 0,
+                        Err(e) => {
+                            tracing::warn!("send raw frame: {}", e);
+                            consecutive_send_errors += 1;
+                            if consecutive_send_errors > MAX_CONSECUTIVE_SEND_ERRORS {
+                                return Err(e);
+                            }
+                        }
+                    }
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -154,8 +258,7 @@ impl SenderPipeline {
         out.extend_from_slice(&frame.height.to_le_bytes());
         out.push(FRAME_TYPE_VP9);
         out.extend_from_slice(&pkt.data);
-        self.send_video_message(out).await;
-        Ok(())
+        self.send_video_message(out).await
     }
 
     async fn send_raw_frame(&mut self, frame: &CapturedFrame) -> Result<()> {
@@ -170,8 +273,7 @@ impl SenderPipeline {
         out.push(FRAME_TYPE_RAW);
         out.extend_from_slice(&bgra);
 
-        self.send_video_message(out).await;
-        Ok(())
+        self.send_video_message(out).await
     }
 }
 
@@ -185,25 +287,45 @@ pub struct ReceiverPipeline {
     decoder: Option<Vp9Decoder>,
     /// Active recorder and when its recording started. Pulled fresh from the
     /// global slot every frame so recording can start/stop mid-session.
-    recorder: Option<(std::sync::Arc<std::sync::Mutex<Recorder>>, std::time::Instant)>,
+    recorder: Option<(
+        std::sync::Arc<std::sync::Mutex<Recorder>>,
+        std::time::Instant,
+    )>,
 }
 
 impl ReceiverPipeline {
-    pub fn new(transport: QuicTransport, _width: u32, _height: u32) -> (Self, broadcast::Receiver<VideoFrame>) {
+    pub fn new(
+        transport: QuicTransport,
+        _width: u32,
+        _height: u32,
+    ) -> (Self, broadcast::Receiver<VideoFrame>) {
         let (tx, rx) = broadcast::channel(8);
-        let this = Self { transport, frame_tx: tx, decoder: None, recorder: None };
+        let this = Self {
+            transport,
+            frame_tx: tx,
+            decoder: None,
+            recorder: None,
+        };
         (this, rx)
     }
 
     /// Append an encoded frame to the session recorder, if one is active.
     /// Only VP9 frames are stored (raw BGRA would be ≈250 MB/s at 1080p30).
     fn record_encoded_frame(&mut self, width: u32, height: u32, payload: &[u8]) {
-        let Some(rec) = crate::api::current_recorder() else { return };
+        let Some(rec) = crate::api::current_recorder() else {
+            return;
+        };
         // New recorder instance → restart the timestamp base.
-        if self.recorder.as_ref().is_none_or(|(r, _)| !std::sync::Arc::ptr_eq(r, &rec)) {
+        if self
+            .recorder
+            .as_ref()
+            .is_none_or(|(r, _)| !std::sync::Arc::ptr_eq(r, &rec))
+        {
             self.recorder = Some((rec, std::time::Instant::now()));
         }
-        let Some((rec, start)) = self.recorder.as_ref() else { return };
+        let Some((rec, start)) = self.recorder.as_ref() else {
+            return;
+        };
         let ts = start.elapsed().as_millis() as u64;
         if let Ok(mut r) = rec.lock() {
             // First frame (or a resolution change) fixes the header dims.
@@ -220,12 +342,17 @@ impl ReceiverPipeline {
     pub async fn run(&mut self) -> Result<()> {
         // Other pipelines (input, clipboard) share the connection; accept only
         // the Video stream and leave the rest to their own accept_channel calls.
-        tokio::time::timeout(ACCEPT_TIMEOUT, self.transport.accept_channel(Channel::Video))
-            .await
-            .map_err(|_| alldesk_core::Error::Network(
-                "timed out waiting for sender to open Video stream (15s)".into()
-            ))?
-            .map_err(|e| alldesk_core::Error::Network(format!("accept Video stream: {}", e)))?;
+        tokio::time::timeout(
+            ACCEPT_TIMEOUT,
+            self.transport.accept_channel(Channel::Video),
+        )
+        .await
+        .map_err(|_| {
+            alldesk_core::Error::Network(
+                "timed out waiting for sender to open Video stream (15s)".into(),
+            )
+        })?
+        .map_err(|e| alldesk_core::Error::Network(format!("accept Video stream: {}", e)))?;
 
         tracing::info!("Video stream accepted, starting recv loop");
         let mut consecutive_errors = 0u32;
@@ -253,7 +380,11 @@ impl ReceiverPipeline {
                     };
 
                     if bgra_data.len() == width as usize * height as usize * 4 {
-                        let vf = VideoFrame { bgra_data, width, height };
+                        let vf = VideoFrame {
+                            bgra_data,
+                            width,
+                            height,
+                        };
                         let _ = self.frame_tx.send(vf);
                     }
                 }
@@ -325,7 +456,10 @@ unsafe impl Send for AudioSenderPipeline {}
 impl AudioSenderPipeline {
     pub fn new(transport: QuicTransport) -> Result<Self> {
         let capturer = AudioCapturer::new()?;
-        Ok(Self { capturer, transport })
+        Ok(Self {
+            capturer,
+            transport,
+        })
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -457,12 +591,15 @@ impl ClipboardPipeline {
         } else {
             // Input and Video pipelines share this connection; wait for OUR
             // stream instead of grabbing whatever arrives first.
-            tokio::time::timeout(ACCEPT_TIMEOUT, self.transport.accept_channel(Channel::Clipboard))
-                .await
-                .map_err(|_| alldesk_core::Error::Network(
-                    "timed out waiting for Clipboard stream (15s)".into()
-                ))?
-                .map_err(|e| alldesk_core::Error::Network(format!("accept Clipboard: {}", e)))?;
+            tokio::time::timeout(
+                ACCEPT_TIMEOUT,
+                self.transport.accept_channel(Channel::Clipboard),
+            )
+            .await
+            .map_err(|_| {
+                alldesk_core::Error::Network("timed out waiting for Clipboard stream (15s)".into())
+            })?
+            .map_err(|e| alldesk_core::Error::Network(format!("accept Clipboard: {}", e)))?;
             // Read and discard the handshake byte
             let _ = self.transport.recv(Channel::Clipboard).await;
             tracing::info!("clipboard pipeline: stream accepted");

@@ -33,7 +33,9 @@ impl TlsConfig {
             .with_single_cert(certs, key)?;
 
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-        Ok(Self { acceptor: Arc::new(acceptor) })
+        Ok(Self {
+            acceptor: Arc::new(acceptor),
+        })
     }
 }
 
@@ -180,20 +182,30 @@ fn validate_message(msg: &Message) -> Result<(), String> {
             }
 
             // Try to parse as JSON to verify it's valid signaling message
-            let parsed: serde_json::Value = serde_json::from_str(text)
-                .map_err(|e| format!("Invalid JSON: {}", e))?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(text).map_err(|e| format!("Invalid JSON: {}", e))?;
 
             // Verify it has a "type" field
-            let msg_type = parsed.get("type")
+            let msg_type = parsed
+                .get("type")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing 'type' field".to_string())?;
 
             // Validate known message types
             const VALID_TYPES: &[&str] = &[
-                "register", "lookup", "lookup_response",
-                "connect_request", "connect_accept", "connect_reject",
-                "incoming_connection", "relay_request", "relay_assigned",
-                "list_peers", "peer_list", "heartbeat", "heartbeat_ack",
+                "register",
+                "lookup",
+                "lookup_response",
+                "connect_request",
+                "connect_accept",
+                "connect_reject",
+                "incoming_connection",
+                "relay_request",
+                "relay_assigned",
+                "list_peers",
+                "peer_list",
+                "heartbeat",
+                "heartbeat_ack",
                 "error",
             ];
 
@@ -387,10 +399,7 @@ where
                 let signaling_msg = match SignalingMessage::from_ws_message(&msg) {
                     Ok(m) => m,
                     Err(e) => {
-                        warn!(
-                            "Invalid signaling message from {}: {}",
-                            read_addr, e
-                        );
+                        warn!("Invalid signaling message from {}: {}", read_addr, e);
                         let _ = tx.send(
                             SignalingMessage::Error {
                                 message: format!("Invalid message: {}", e),
@@ -491,9 +500,7 @@ async fn handle_signaling_message(
                 *current = Some(pid.clone());
             }
 
-            broadcaster
-                .register_sender(pid.clone(), tx.clone())
-                .await;
+            broadcaster.register_sender(pid.clone(), tx.clone()).await;
 
             if is_new {
                 let _ = tx.send(

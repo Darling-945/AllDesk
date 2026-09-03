@@ -188,13 +188,15 @@ impl FileTransfer {
             write_fn(&chunk).await?;
 
             // Update progress.
-            self.bytes_transferred.store(bytes_read_total, Ordering::Relaxed);
+            self.bytes_transferred
+                .store(bytes_read_total, Ordering::Relaxed);
             let frac = if file_size > 0 {
                 bytes_read_total as f64 / file_size as f64
             } else {
                 1.0
             };
-            self.progress_fixed.store(frac_to_fixed(frac), Ordering::Relaxed);
+            self.progress_fixed
+                .store(frac_to_fixed(frac), Ordering::Relaxed);
 
             if let Some(ref cb) = self.progress_callback {
                 cb(bytes_read_total, file_size, frac);
@@ -214,8 +216,10 @@ impl FileTransfer {
                 data: Vec::new(),
                 is_last: true,
                 checksum: Some(0),
-            }).await?;
-            self.progress_fixed.store(frac_to_fixed(1.0), Ordering::Relaxed);
+            })
+            .await?;
+            self.progress_fixed
+                .store(frac_to_fixed(1.0), Ordering::Relaxed);
         }
 
         Ok(())
@@ -248,13 +252,15 @@ impl FileTransfer {
             bytes_written += chunk.data.len() as u64;
 
             // Update progress.
-            self.bytes_transferred.store(bytes_written, Ordering::Relaxed);
+            self.bytes_transferred
+                .store(bytes_written, Ordering::Relaxed);
             let frac = if total_data_size > 0 {
                 bytes_written as f64 / total_data_size as f64
             } else {
                 1.0
             };
-            self.progress_fixed.store(frac_to_fixed(frac), Ordering::Relaxed);
+            self.progress_fixed
+                .store(frac_to_fixed(frac), Ordering::Relaxed);
 
             if let Some(ref cb) = self.progress_callback {
                 cb(bytes_written, total_data_size, frac);
@@ -315,13 +321,15 @@ impl FileTransfer {
             bytes_copied += bytes_read as u64;
 
             // Update progress.
-            self.bytes_transferred.store(bytes_copied, Ordering::Relaxed);
+            self.bytes_transferred
+                .store(bytes_copied, Ordering::Relaxed);
             let frac = if file_size > 0 {
                 bytes_copied as f64 / file_size as f64
             } else {
                 1.0
             };
-            self.progress_fixed.store(frac_to_fixed(frac), Ordering::Relaxed);
+            self.progress_fixed
+                .store(frac_to_fixed(frac), Ordering::Relaxed);
 
             if let Some(ref cb) = self.progress_callback {
                 cb(bytes_copied, file_size, frac);
@@ -418,10 +426,9 @@ impl TransferManifest {
     /// Save the manifest to a JSON sidecar file next to the destination.
     pub async fn save(&self) -> Result<()> {
         let path = format!("{}.part", self.destination);
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| alldesk_core::Error::Io(std::io::Error::other(
-                format!("serialize manifest: {}", e),
-            )))?;
+        let json = serde_json::to_string_pretty(self).map_err(|e| {
+            alldesk_core::Error::Io(std::io::Error::other(format!("serialize manifest: {}", e)))
+        })?;
         tokio::fs::write(&path, json).await?;
         Ok(())
     }
@@ -430,11 +437,12 @@ impl TransferManifest {
     pub async fn load(destination: &str) -> Result<Self> {
         let path = format!("{}.part", destination);
         let data = tokio::fs::read_to_string(&path).await?;
-        let manifest: TransferManifest = serde_json::from_str(&data)
-            .map_err(|e| alldesk_core::Error::Io(std::io::Error::new(
+        let manifest: TransferManifest = serde_json::from_str(&data).map_err(|e| {
+            alldesk_core::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("parse manifest: {}", e),
-            )))?;
+            ))
+        })?;
         Ok(manifest)
     }
 
@@ -477,12 +485,16 @@ mod tests {
                 checksum: chunk.checksum,
             });
             std::future::ready(Ok(()))
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         assert!(!chunks.is_empty());
         assert!(chunks.last().unwrap().is_last);
 
-        ft.receive_file(&chunks, &dest.to_string_lossy()).await.unwrap();
+        ft.receive_file(&chunks, &dest.to_string_lossy())
+            .await
+            .unwrap();
 
         let result = std::fs::read(&dest).unwrap();
         assert_eq!(result, data);
@@ -509,13 +521,17 @@ mod tests {
                 checksum: chunk.checksum,
             });
             std::future::ready(Ok(()))
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].is_last);
         assert!(chunks[0].data.is_empty());
 
-        ft.receive_file(&chunks, &_dest.to_string_lossy()).await.unwrap();
+        ft.receive_file(&chunks, &_dest.to_string_lossy())
+            .await
+            .unwrap();
         let result = std::fs::read(&_dest).unwrap();
         assert!(result.is_empty());
 
@@ -525,7 +541,9 @@ mod tests {
     #[tokio::test]
     async fn test_file_transfer_missing_source() {
         let ft = FileTransfer::new();
-        let result = ft.send_file("/nonexistent/file.bin", |_| std::future::ready(Ok(()))).await;
+        let result = ft
+            .send_file("/nonexistent/file.bin", |_| std::future::ready(Ok(())))
+            .await;
         assert!(result.is_err());
     }
 
@@ -549,7 +567,9 @@ mod tests {
                 checksum: chunk.checksum,
             });
             std::future::ready(Ok(()))
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         // Progress should be 1.0 after completion
         let progress = ft.progress();
@@ -570,7 +590,9 @@ mod tests {
         std::fs::write(&src, &data).unwrap();
 
         let ft = FileTransfer::new();
-        ft.copy_file(&src.to_string_lossy(), &dest.to_string_lossy()).await.unwrap();
+        ft.copy_file(&src.to_string_lossy(), &dest.to_string_lossy())
+            .await
+            .unwrap();
 
         let result = std::fs::read(&dest).unwrap();
         assert_eq!(result, data);

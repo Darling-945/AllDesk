@@ -10,8 +10,8 @@
 | **P1** | 文件传输未接入 FFI 和 Flutter UI | [x] | File 通道管线 + FFI + Flutter 文件选择/进度页 |
 | **P1** | P2P 打洞（ICE）未接入连接流程 | [ ] | IceAgent 已实现，ffi/api.rs 仅直连，无打洞逻辑 |
 | **P1** | 自动重连未接入 FFI | [x] | 断线后 supervisor 自动重建会话（退避重试 + 代数防陈旧） |
-| **P1** | 端到端加密未在传输层启用 | [ ] | E2ECrypto 已实现，QuicTransport 未调用加密 |
-| **P1** | 带宽估计未接入发送管线 | [ ] | BandwidthEstimator 已实现，SenderPipeline 未做自适应码率 |
+| **P1** | 端到端加密未在传输层启用 | [ ] | E2ECrypto 已实现，QuicTransport 未调用加密（与 QUIC TLS 能力重叠，是否保留待定） |
+| **P1** | 带宽估计未接入发送管线 | [x] | 每秒采样 quinn RTT/丢包 → AIMD 自适应码率+帧率闭环（bwe.rs 延迟趋势估计器仍未使用） |
 | **P1** | 流控未在传输层使用 | [x] | SenderPipeline 接入 FlowController：背压时丢旧帧 |
 | **P2** | 连接质量未暴露到 Flutter UI | [x] | 每秒采样 RTT/丢包/带宽，get_connection_quality 输出真实指标 |
 | **P2** | macOS/Linux 屏幕捕获缺失 | [ ] | lib.rs 中已注释掉 quartz/x11/wayland 模块 |
@@ -81,7 +81,15 @@
 
 ---
 
-## 本次优化完成项 (Phase 22+19+16+14+15+17+18+23+11+24+25+26)
+## 本次优化完成项 (Phase 27+22+19+16+14+15+17+18+23+11+24+25+26)
+
+### Phase 27: 自适应码率闭环 + 发送循环修复 ✅
+- [x] **自适应控制闭环** — host 会话每秒采样 quinn RTT/丢包（LossRateTracker 增量计算，重连无虚假丢包尖峰），AdaptiveController (AIMD) 通过 watch 通道发布目标，SenderPipeline 动态应用
+- [x] **动态帧率节拍** — 发送循环改用 sleep_until 手动调度器（tokio Interval 不支持改周期），FPS 变化即时生效，落后时跳过而非突发补帧
+- [x] **Vp9Encoder 重配置修复** — set_bitrate 原先从默认配置重建（会把 g_lag_in_frames 重置回 25 帧重新引入约 800ms 延迟）；现在通过共享 realtime_config 保留全部实时参数，新增 reconfigure(bitrate, fps)
+- [x] **发送循环断线退出** — 断线后原先每帧 warn 无限循环且任务泄漏；现在连续 60 次发送失败（约 2 秒）后退出会话，join 收尾
+- [x] **AIMD 策略迁移** — AdaptiveBitrate/AdaptiveFramerate 移至 alldesk-core（codec 重新导出保持 API），新增 AdaptiveController/LossRateTracker 共 18 个测试可在本机运行
+- [x] **文档同步** — TODO/README 与实现现状对齐（移除白板/Opus/H.264/AV1/prost 失实宣称，测试统计更新为 273）
 
 ### Phase 26: Android设备测试 + Flutter测试 + 帧推送优化 ✅
 - [x] **Android设备部署** — 调试APK成功构建、安装并运行于 PLC110 (Android 16 API 36)
@@ -195,8 +203,8 @@
 - [ ] **GPU 硬件加速** — 当前纯软件编解码，无 NVENC/QSV/VideoToolbox 支持
 - [ ] **GPU Texture 直传** — codec 的 encode_texture() 直接返回错误
 - [x] **NV12 像素格式** — bgra_to_nv12/nv12_to_bgra BT.601转换 (6 tests)
-- [x] **动态码率调整** — AdaptiveBitrate AIMD算法已实现
-- [x] **帧率自适应** — AdaptiveFramerate AIMD算法，基于RTT/丢包自适应 (4 tests)
+- [x] **动态码率调整** — AdaptiveBitrate AIMD算法已实现，且已接入发送管线闭环（每秒按 RTT/丢包调整编码码率）
+- [x] **帧率自适应** — AdaptiveFramerate AIMD算法，基于RTT/丢包自适应 (4 tests)，且已接入发送管线（动态调整捕获/编码节拍）
 
 ---
 
@@ -223,21 +231,22 @@
 
 ### Phase 17: 文件传输完善
 
-- [x] **断点续传** — TransferManifest chunk状态持久化 + CRC32校验已实现
+- [x] **断点续传** — TransferManifest chunk状态持久化 + CRC32校验已实现（manifest 机制尚未接入实际传输协议，当前会话传输为一次性流式发送）
 - [x] ~~**Chunk 校验**~~ — 已实现CRC32校验和，支持compute/verify (5 tests)
-- [ ] **文件传输 UI** — Flutter FileTransferPage 当前是空占位页
-- [ ] **传输速度/进度显示** — 无可视化进度条和速率指示
+- [x] **文件传输 UI** — FileTransferPage：文件选择(file_picker) + 500ms 进度轮询 + 传输卡片
+- [x] **传输速度/进度显示** — get_file_transfer_status() 输出方向/文件名/已传/总量/错误，UI 渲染进度条
 - [ ] **传输队列管理** — 无多文件排队和优先级控制
 
 ---
 
 ### Phase 18: 白板 & 录屏
 
-- [x] **白板同步协议** — 序列化/反序列化 + 版本化快照/恢复已实现
-- [x] **白板冲突解决** — CRDT Lamport时钟 + tombstone合并 + merge() (10 tests)
-- [ ] **白板绘图控件** — Flutter WhiteboardOverlay 只是占位，无画笔/形状工具
+- [x] ~~**白板同步协议**~~ — crate 与占位 UI 已整体移除（git 历史可找回）
+- [x] ~~**白板冲突解决**~~ — 随白板 crate 移除
+- 已移除 **白板绘图控件** — 随白板 crate 移除
 - [x] **WebM 容器** — WebmMuxer EBML+SimpleBlock VP9输出 (6 tests)
 - [x] **录屏音频轨道** — ALDREC v2格式支持音频帧读写 (4 tests)
+- [x] **会话录制接线** — ReceiverPipeline 录制 VP9 帧，FFI start/stop_session_recording + 远程页录制按钮
 - [ ] **录屏播放器** — 无 ALDREC/WebM 回放 UI
 
 ---
@@ -260,12 +269,12 @@
 
 ### Phase 20: Flutter UI 完善
 
-- [x] **连接质量指标** — QualityCollector RTT/丢包/带宽 + QualityLevel (15 tests)
-- [ ] **文件传输页面** — FileTransferPage 是空占位，需实现完整 UI
-- [ ] **白板控件** — 无画笔颜色/粗细/形状选择器
-- [ ] **错误展示** — Rust 层错误未展示给用户，仅有 debugPrint
-- [ ] **连接重试** — 连接失败无重试机制和详细错误信息
-- [ ] **网络中断恢复** — 无断线检测和自动重连 UI
+- [x] **连接质量指标** — QualityCollector RTT/丢包/带宽 + QualityLevel (15 tests)，get_connection_quality 每秒输出真实 quinn 指标
+- [x] **文件传输页面** — 选文件 + 进度轮询 + 进度卡片已实现
+- 已移除 **白板控件** — 随白板 crate 移除
+- [x] **错误展示** — 远程会话页在 UI 显示连接错误（其余页面仍用 debugPrint，待统一）
+- [x] **连接重试** — Rust 侧 supervisor 断线自动重连（退避 + 代数防陈旧）；初次连接带重试循环
+- [x] **网络中断恢复** — 断线后自动重建会话并恢复画面/音频/剪贴板管线；无专门的重连状态 UI 提示
 - [ ] **暗色主题** — 基础主题切换已有，但未完善系统主题联动
 - [ ] **国际化 (i18n)** — 无多语言支持，所有文案硬编码中文
 - [ ] **辅助功能** — 无屏幕阅读器、高对比度、文字大小调整支持
@@ -288,18 +297,16 @@
 ### Phase 22: 测试 & CI
 
 - [x] **CI/CD 配置** — GitHub Actions CI (check, test, build, flutter analyze)
-- [x] ~~**Rust 单元测试补全**~~ — 295 tests passing across all crates
-  - alldesk-net: 73 tests ✅ (Channel, QUIC, discovery, reconnect, ICE, flow, BWE, TLS pin, E2E crypto, latency, integration)
-  - alldesk-recording: 11 tests ✅ (video + audio + v1 compat)
-  - alldesk-whiteboard: 25 tests ✅ (含sync protocol + CRDT merge)
+- [x] ~~**Rust 单元测试补全**~~ — 273 tests passing（可本地链接的 crate）
+  - alldesk-core: 18 tests ✅ (config + adaptive 控制器 / 丢包率跟踪器)
+  - alldesk-net: 73 + 7 integration tests ✅ (Channel, QUIC, discovery, reconnect, ICE, flow, BWE, TLS pin, E2E crypto, latency)
   - alldesk-files: 45 tests ✅ (含CRC32校验 + manifest + 文件验证)
-  - alldesk-audio: 7 tests ✅
+  - alldesk-platform: 55 tests ✅ (audio/clipboard/input 合并后)
+  - alldesk-recording: 17 tests ✅ (write/read roundtrip, empty/large/error cases)
   - alldesk-capture: 6 tests ✅ (config, pixel format, cursor)
-  - alldesk-input: 27 tests ✅ (touch/gesture, multi-monitor, Android, permission)
-  - alldesk-clipboard: 7 tests (已有)
-  - alldesk-codec: 10 tests ✅ (bitrate, framerate, pool, color - linker issue on test)
   - server: 52 tests ✅ (registry, signaling, STUN IPv6, config, auth, metrics, bandwidth, TURN)
-  - **Total: 295 tests, all passing**
+  - alldesk-codec: 10 tests（编译通过；本机缺 vpx.lib 无法链接测试二进制，CI 可跑）
+  - **Total: 273 tests, all passing locally**
 - [x] **Flutter 测试** — 44个测试覆盖主题/设置Provider/发现Provider/文件传输页面/路由
 - [ ] **集成测试** — QUIC集成测试已有(7个)，缺文件传输端到端测试
 - [ ] **性能基准** — 无编解码/网络/捕获性能 benchmark

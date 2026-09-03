@@ -105,11 +105,7 @@ struct PendingRelay {
 
 impl RelayServer {
     /// Create a new relay server.
-    pub fn new(
-        registry: PeerRegistry,
-        broadcaster: SignalingBroadcaster,
-        base_port: u16,
-    ) -> Self {
+    pub fn new(registry: PeerRegistry, broadcaster: SignalingBroadcaster, base_port: u16) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -176,7 +172,10 @@ impl RelayServer {
                 metrics::record_active_relay_sessions(active);
                 drop(sessions);
                 let pending = stats_pending.lock().await.len();
-                info!("Relay stats: {} active sessions, {} pending", active, pending);
+                info!(
+                    "Relay stats: {} active sessions, {} pending",
+                    active, pending
+                );
             }
         });
 
@@ -208,11 +207,7 @@ impl RelayServer {
     }
 
     /// Create a new relay session for two peers. Returns the session ID.
-    pub async fn create_session(
-        &self,
-        peer_a_id: String,
-        peer_b_id: String,
-    ) -> String {
+    pub async fn create_session(&self, peer_a_id: String, peer_b_id: String) -> String {
         let session_id = uuid::Uuid::new_v4().to_string();
         info!(
             "Created relay session {} for peers {} <-> {}",
@@ -223,11 +218,7 @@ impl RelayServer {
     }
 
     /// Register a peer's QUIC connection for an existing relay session.
-    pub async fn register_connection(
-        &self,
-        session_id: &str,
-        peer_id: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn register_connection(&self, session_id: &str, peer_id: &str) -> anyhow::Result<()> {
         // This is a placeholder for signaling-triggerled relay setup.
         // Actual connection matching happens in handle_relay_connection.
         debug!(
@@ -271,8 +262,8 @@ async fn handle_relay_connection(
         .map_err(|e| anyhow::anyhow!("read control: {}", e))?
         .ok_or_else(|| anyhow::anyhow!("empty control message"))?;
 
-    let control: RelayControlMessage = serde_json::from_slice(&buf[..n])
-        .map_err(|e| anyhow::anyhow!("parse control: {}", e))?;
+    let control: RelayControlMessage =
+        serde_json::from_slice(&buf[..n]).map_err(|e| anyhow::anyhow!("parse control: {}", e))?;
 
     debug!(
         "Relay control: session_id={}, peer_id={}",
@@ -291,17 +282,17 @@ async fn handle_relay_connection(
 
     // Check if partner is already waiting
     let mut pending_guard = pending.lock().await;
-    if let Some(partner) = pending_guard.values().find(|p| {
-        p.session_id == control.session_id && p.peer_id != control.peer_id
-    }) {
+    if let Some(partner) = pending_guard
+        .values()
+        .find(|p| p.session_id == control.session_id && p.peer_id != control.peer_id)
+    {
         let partner_conn = partner.connection.clone();
         let partner_peer_id = partner.peer_id.clone();
         let session_id = control.session_id.clone();
         let peer_id = control.peer_id.clone();
 
-        pending_guard.retain(|_, p| {
-            !(p.session_id == control.session_id && p.peer_id != control.peer_id)
-        });
+        pending_guard
+            .retain(|_, p| !(p.session_id == control.session_id && p.peer_id != control.peer_id));
         drop(pending_guard);
 
         info!(
@@ -350,9 +341,10 @@ async fn bridge_connections(
 
     let now = std::time::Instant::now();
 
-    let bw_limiter = Arc::new(tokio::sync::Mutex::new(
-        TokenBucket::new(DEFAULT_SESSION_BANDWIDTH, DEFAULT_SESSION_BANDWIDTH),
-    ));
+    let bw_limiter = Arc::new(tokio::sync::Mutex::new(TokenBucket::new(
+        DEFAULT_SESSION_BANDWIDTH,
+        DEFAULT_SESSION_BANDWIDTH,
+    )));
 
     // Register the active session
     {
@@ -446,7 +438,9 @@ async fn forward_bi_stream(
     to: quinn::Connection,
 ) -> anyhow::Result<()> {
     // Open a corresponding bidirectional stream on the target connection.
-    let (mut target_send, mut target_recv) = to.open_bi().await
+    let (mut target_send, mut target_recv) = to
+        .open_bi()
+        .await
         .map_err(|e| anyhow::anyhow!("open_bi to target: {}", e))?;
 
     // Forward data from recv -> target_send (original peer to target).
@@ -487,8 +481,7 @@ fn create_relay_endpoint(port: u16) -> anyhow::Result<quinn::Endpoint> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
     let cert = generate_self_signed_cert()?;
 
-    let server_config =
-        quinn::ServerConfig::with_single_cert(vec![cert.cert_der], cert.key_der)?;
+    let server_config = quinn::ServerConfig::with_single_cert(vec![cert.cert_der], cert.key_der)?;
 
     let endpoint = quinn::Endpoint::server(server_config, addr.into())?;
     Ok(endpoint)
@@ -508,8 +501,7 @@ fn generate_self_signed_cert() -> anyhow::Result<RelayCert> {
         rcgen::generate_simple_self_signed(subject_alt_names)?;
 
     let cert_der = cert.der().clone();
-    let key_der =
-        rustls::pki_types::PrivateKeyDer::Pkcs8(key_pair.serialize_der().into());
+    let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(key_pair.serialize_der().into());
 
     Ok(RelayCert {
         cert,

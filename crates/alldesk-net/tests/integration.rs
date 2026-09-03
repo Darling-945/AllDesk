@@ -60,12 +60,19 @@ async fn test_quic_loopback_multiple_channels() {
 
     assert_eq!(results.len(), channels_and_payloads.len());
     for (i, (expected_ch, expected_data)) in channels_and_payloads.iter().enumerate() {
-        assert_eq!(results[i].0, *expected_ch, "channel mismatch at index {}", i);
+        assert_eq!(
+            results[i].0, *expected_ch,
+            "channel mismatch at index {}",
+            i
+        );
         assert_eq!(&results[i].1, expected_data, "data mismatch at index {}", i);
     }
 
     // Also verify Audio (datagram) can be sent without error.
-    client_transport.send(Channel::Audio, b"opus-packet").await.unwrap();
+    client_transport
+        .send(Channel::Audio, b"opus-packet")
+        .await
+        .unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +93,10 @@ async fn test_quic_loopback_large_message() {
         st.recv(ch).await.unwrap()
     });
 
-    client_transport.send(Channel::Input, &large_data).await.unwrap();
+    client_transport
+        .send(Channel::Input, &large_data)
+        .await
+        .unwrap();
 
     let received = server_task.await.unwrap();
 
@@ -118,7 +128,9 @@ async fn test_quic_loopback_bidirectional() {
         let from_client = st.recv(ch).await.unwrap();
 
         // Server sends on Clipboard channel.
-        st.send(Channel::Clipboard, &server_msg_clone).await.unwrap();
+        st.send(Channel::Clipboard, &server_msg_clone)
+            .await
+            .unwrap();
 
         // Wait for client to accept and read our stream before dropping.
         // Hold the transport alive by sleeping briefly to let the client
@@ -129,7 +141,10 @@ async fn test_quic_loopback_bidirectional() {
     });
 
     // Client sends on Input, then accepts server's Clipboard stream concurrently.
-    client_transport.send(Channel::Input, &client_msg).await.unwrap();
+    client_transport
+        .send(Channel::Input, &client_msg)
+        .await
+        .unwrap();
 
     // Client accepts server's stream (Clipboard) and reads.
     let client_task = tokio::spawn(async move {
@@ -193,8 +208,14 @@ async fn test_ice_candidate_exchange() {
     let a_cands = agent_a.gather_host_candidates(21116).unwrap();
     let b_cands = agent_b.gather_host_candidates(21116).unwrap();
 
-    assert!(!a_cands.is_empty(), "agent A should gather at least one host candidate");
-    assert!(!b_cands.is_empty(), "agent B should gather at least one host candidate");
+    assert!(
+        !a_cands.is_empty(),
+        "agent A should gather at least one host candidate"
+    );
+    assert!(
+        !b_cands.is_empty(),
+        "agent B should gather at least one host candidate"
+    );
 
     for c in &a_cands {
         assert_eq!(c.candidate_type, IceCandidateType::Host);
@@ -234,10 +255,15 @@ async fn test_ice_candidate_exchange() {
     }
 
     // Verify uniqueness of (local, remote) pairs.
-    let a_pair_ids: HashSet<_> = a_pairs.iter()
+    let a_pair_ids: HashSet<_> = a_pairs
+        .iter()
         .map(|(l, r)| (l.id.clone(), r.id.clone()))
         .collect();
-    assert_eq!(a_pair_ids.len(), a_pairs.len(), "all pairs should be unique");
+    assert_eq!(
+        a_pair_ids.len(),
+        a_pairs.len(),
+        "all pairs should be unique"
+    );
 
     // No selected pair before connectivity checks.
     assert!(agent_a.selected_pair().is_none());
@@ -300,8 +326,14 @@ async fn test_flow_control_backpressure_integration() {
         recv_items.push(data[0]);
     }
     assert_eq!(recv_items.len(), 8);
-    assert!(!recv_items.contains(&0u8), "item 0 should have been dropped");
-    assert!(!recv_items.contains(&1u8), "item 1 should have been dropped");
+    assert!(
+        !recv_items.contains(&0u8),
+        "item 0 should have been dropped"
+    );
+    assert!(
+        !recv_items.contains(&1u8),
+        "item 1 should have been dropped"
+    );
     for i in 2u8..=9 {
         assert!(recv_items.contains(&i), "item {} should be present", i);
     }
@@ -322,9 +354,7 @@ async fn test_reconnect_flow() {
     assert_eq!(mgr.state().await, ConnectionState::Disconnected);
     assert!(mgr.can_reconnect().await);
 
-    let server1_handle = tokio::spawn(async move {
-        server1.accept().await.unwrap()
-    });
+    let server1_handle = tokio::spawn(async move { server1.accept().await.unwrap() });
 
     let conn = mgr.connect().await.unwrap();
     let _st1 = server1_handle.await.unwrap();
@@ -360,7 +390,10 @@ async fn test_reconnect_flow() {
     });
 
     use alldesk_net::Transport;
-    transport2.send(Channel::Control, b"reconnected-ok").await.unwrap();
+    transport2
+        .send(Channel::Control, b"reconnected-ok")
+        .await
+        .unwrap();
     let data = recv_task.await.unwrap();
     assert_eq!(&data, b"reconnected-ok");
 

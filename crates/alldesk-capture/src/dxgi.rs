@@ -9,25 +9,26 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use windows::core::IUnknown;
 use windows::core::Interface;
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
-    D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ, D3D11_TEXTURE2D_DESC,
-    D3D11_CPU_ACCESS_READ, D3D11_SDK_VERSION, D3D11_USAGE_STAGING,
+    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_CPU_ACCESS_READ,
+    D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+    D3D11_USAGE_STAGING,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter, IDXGIOutput, IDXGIOutput1, IDXGIOutputDuplication,
     IDXGIResource, DXGI_ADAPTER_DESC, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_WAIT_TIMEOUT,
-    DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTPUT_DESC, DXGI_OUTDUPL_POINTER_SHAPE_INFO,
+    DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTDUPL_POINTER_SHAPE_INFO, DXGI_OUTPUT_DESC,
 };
-use windows::Win32::Foundation::RECT;
 
 use alldesk_core::Error;
 use alldesk_core::Result;
 
 use crate::capture::{
-    CaptureConfig, CaptureProvider, CapturedFrame, CursorInfo, CursorShapeType, FrameData, MonitorInfo, PixelFormat,
+    CaptureConfig, CaptureProvider, CapturedFrame, CursorInfo, CursorShapeType, FrameData,
+    MonitorInfo, PixelFormat,
 };
 
 /// DXGI-based desktop duplication capturer for Windows.
@@ -125,8 +126,8 @@ impl DxgiCapturer {
                 .map_err(|e| win_err(e, "CreateTexture2D (staging) failed"))?;
         }
 
-        let staging = staging
-            .ok_or_else(|| Error::Capture("Staging texture was not created".into()))?;
+        let staging =
+            staging.ok_or_else(|| Error::Capture("Staging texture was not created".into()))?;
 
         self.staging_texture = Some(staging.clone());
         self.staging_dims = (width, height);
@@ -162,7 +163,10 @@ fn extract_dirty_rects(
     let rect_size = std::mem::size_of::<RECT>();
     let num_rects = rects_returned as usize;
     let rects = unsafe {
-        std::slice::from_raw_parts(buf.as_ptr() as *const RECT, num_rects.min(buffer_size / rect_size))
+        std::slice::from_raw_parts(
+            buf.as_ptr() as *const RECT,
+            num_rects.min(buffer_size / rect_size),
+        )
     };
 
     rects
@@ -214,7 +218,14 @@ fn extract_cursor_info(
                     4 => CursorShapeType::MaskedColor,
                     _ => CursorShapeType::Color,
                 };
-                (Some(shape_buf), shape_info.Width, shape_info.Height, shape_info.HotSpot.x as u32, shape_info.HotSpot.y as u32, st)
+                (
+                    Some(shape_buf),
+                    shape_info.Width,
+                    shape_info.Height,
+                    shape_info.HotSpot.x as u32,
+                    shape_info.HotSpot.y as u32,
+                    st,
+                )
             } else {
                 (None, 0, 0, 0, 0, CursorShapeType::Monochrome)
             }
@@ -249,15 +260,15 @@ unsafe fn create_device() -> Result<(ID3D11Device, ID3D11DeviceContext)> {
 
     unsafe {
         D3D11CreateDevice(
-            None,                                   // padapter: default adapter
-            D3D_DRIVER_TYPE_HARDWARE,               // drivertype
-            None,                                   // software: None for hardware
+            None,                                                              // padapter: default adapter
+            D3D_DRIVER_TYPE_HARDWARE,                                          // drivertype
+            None, // software: None for hardware
             windows::Win32::Graphics::Direct3D11::D3D11_CREATE_DEVICE_FLAG(0), // flags: none
-            Some(&feature_levels),                  // pfeaturelevels
-            D3D11_SDK_VERSION,                      // sdkversion
-            Some(&mut device),                      // ppdevice
-            None,                                   // pfeaturelevel
-            Some(&mut context),                     // ppimmediatecontext
+            Some(&feature_levels), // pfeaturelevels
+            D3D11_SDK_VERSION, // sdkversion
+            Some(&mut device), // ppdevice
+            None, // pfeaturelevel
+            Some(&mut context), // ppimmediatecontext
         )
         .map_err(|e| win_err(e, "D3D11CreateDevice failed"))?;
     }
@@ -309,11 +320,13 @@ unsafe fn create_duplication(
     output: &IDXGIOutput,
 ) -> Result<IDXGIOutputDuplication> {
     // Cast the output to IDXGIOutput1 to access DuplicateOutput.
-    let output1: IDXGIOutput1 = output.cast()
+    let output1: IDXGIOutput1 = output
+        .cast()
         .map_err(|e| win_err(e, "Failed to cast IDXGIOutput to IDXGIOutput1"))?;
 
     // DuplicateOutput takes the device as IUnknown.
-    let device_unknown: IUnknown = device.cast()
+    let device_unknown: IUnknown = device
+        .cast()
         .map_err(|e| win_err(e, "Failed to cast ID3D11Device to IUnknown"))?;
 
     unsafe { output1.DuplicateOutput(&device_unknown) }
@@ -422,8 +435,8 @@ impl CaptureProvider for DxgiCapturer {
         })?;
 
         // Store the output dimensions for frame size info.
-        let desc = get_output_desc(&output)
-            .map_err(|e| win_err(e, "IDXGIOutput::GetDesc failed"))?;
+        let desc =
+            get_output_desc(&output).map_err(|e| win_err(e, "IDXGIOutput::GetDesc failed"))?;
         let desktop_rect = desc.DesktopCoordinates;
         self.output_width = (desktop_rect.right - desktop_rect.left) as u32;
         self.output_height = (desktop_rect.bottom - desktop_rect.top) as u32;
@@ -487,7 +500,10 @@ impl CaptureProvider for DxgiCapturer {
                 ));
             }
             self.reinit_attempts += 1;
-            info!("Attempting DXGI reinitialization (attempt {})", self.reinit_attempts);
+            info!(
+                "Attempting DXGI reinitialization (attempt {})",
+                self.reinit_attempts
+            );
 
             let config = match self.config.clone() {
                 Some(c) => c,
@@ -496,7 +512,9 @@ impl CaptureProvider for DxgiCapturer {
 
             // Release old resources
             if let Some(dup) = self.duplication.take() {
-                unsafe { let _ = dup.ReleaseFrame(); }
+                unsafe {
+                    let _ = dup.ReleaseFrame();
+                }
             }
             self.duplication = None;
             self.context = None;
@@ -563,16 +581,16 @@ impl CaptureProvider for DxgiCapturer {
         };
 
         // Get the ID3D11Texture2D from the resource.
-        let texture2d: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D =
-            match resource.cast() {
-                Ok(t) => t,
-                Err(e) => {
-                    unsafe {
-                        let _ = duplication.ReleaseFrame();
-                    }
-                    return Err(win_err(e, "Failed to cast resource to ID3D11Texture2D"));
+        let texture2d: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = match resource.cast()
+        {
+            Ok(t) => t,
+            Err(e) => {
+                unsafe {
+                    let _ = duplication.ReleaseFrame();
                 }
-            };
+                return Err(win_err(e, "Failed to cast resource to ID3D11Texture2D"));
+            }
+        };
 
         // Get the texture description to know dimensions and format.
         let mut desc = D3D11_TEXTURE2D_DESC::default();
@@ -689,11 +707,7 @@ impl CaptureProvider for DxgiCapturer {
         self.last_frame_time = Some(Instant::now());
         self.reinit_attempts = 0;
 
-        let monitor_id = self
-            .config
-            .as_ref()
-            .map(|c| c.monitor_id)
-            .unwrap_or(0);
+        let monitor_id = self.config.as_ref().map(|c| c.monitor_id).unwrap_or(0);
 
         Ok(Some(CapturedFrame {
             data: FrameData::Cpu(pixels),

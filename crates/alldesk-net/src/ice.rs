@@ -10,8 +10,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use alldesk_core::Result;
 use alldesk_core::error::Error;
+use alldesk_core::Result;
 
 /// A network candidate representing a possible connection path.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -91,7 +91,8 @@ impl IceAgent {
         let socket = std::net::UdpSocket::bind("0.0.0.0:0")
             .map_err(|e| Error::Network(format!("bind for host candidates: {}", e)))?;
 
-        let local_addr = socket.local_addr()
+        let local_addr = socket
+            .local_addr()
             .map_err(|e| Error::Network(format!("get local addr: {}", e)))?;
 
         // Add the primary local address
@@ -215,20 +216,20 @@ impl IceAgent {
         for (local, remote) in &pairs {
             debug!(
                 "Checking {} {} -> {} {}",
-                local.candidate_type, local.address,
-                remote.candidate_type, remote.address
+                local.candidate_type, local.address, remote.candidate_type, remote.address
             );
 
             // Attempt UDP connectivity check
-            let check_result = Self::check_connectivity(
-                local.address, remote.address, timeout,
-            ).await;
+            let check_result =
+                Self::check_connectivity(local.address, remote.address, timeout).await;
 
             if check_result {
                 info!(
                     "Connectivity check succeeded: {} {} -> {} {} (RTT: {:?})",
-                    local.candidate_type, local.address,
-                    remote.candidate_type, remote.address,
+                    local.candidate_type,
+                    local.address,
+                    remote.candidate_type,
+                    remote.address,
                     "measured"
                 );
 
@@ -267,9 +268,7 @@ impl IceAgent {
         // Wait for response or timeout
         let mut buf = [0u8; 64];
         match tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await {
-            Ok(Ok((len, _))) => {
-                len > 0
-            }
+            Ok(Ok((len, _))) => len > 0,
             _ => false,
         }
     }
@@ -354,7 +353,9 @@ mod tests {
         let mut agent = IceAgent::new();
         let candidates = agent.gather_host_candidates(21116).unwrap();
         assert!(!candidates.is_empty());
-        assert!(candidates.iter().all(|c| c.candidate_type == IceCandidateType::Host));
+        assert!(candidates
+            .iter()
+            .all(|c| c.candidate_type == IceCandidateType::Host));
         // Should have at least one candidate
         assert!(!agent.local_candidates.is_empty());
     }
@@ -393,14 +394,12 @@ mod tests {
         agent.add_server_reflexive("1.2.3.4:21116".parse().unwrap());
         agent.add_relay_candidate("10.0.0.1:21119".parse().unwrap());
 
-        agent.set_remote_candidates(vec![
-            IceCandidate {
-                id: "rh0".into(),
-                candidate_type: IceCandidateType::Host,
-                address: "5.6.7.8:21116".parse().unwrap(),
-                priority: 126,
-            },
-        ]);
+        agent.set_remote_candidates(vec![IceCandidate {
+            id: "rh0".into(),
+            candidate_type: IceCandidateType::Host,
+            address: "5.6.7.8:21116".parse().unwrap(),
+            priority: 126,
+        }]);
 
         let pairs = agent.sorted_candidate_pairs();
         assert_eq!(pairs.len(), 2);
@@ -413,14 +412,12 @@ mod tests {
     fn test_ice_agent_reset() {
         let mut agent = IceAgent::new();
         agent.add_server_reflexive("1.2.3.4:21116".parse().unwrap());
-        agent.set_remote_candidates(vec![
-            IceCandidate {
-                id: "rh0".into(),
-                candidate_type: IceCandidateType::Host,
-                address: "5.6.7.8:21116".parse().unwrap(),
-                priority: 126,
-            },
-        ]);
+        agent.set_remote_candidates(vec![IceCandidate {
+            id: "rh0".into(),
+            candidate_type: IceCandidateType::Host,
+            address: "5.6.7.8:21116".parse().unwrap(),
+            priority: 126,
+        }]);
         agent.reset();
         assert!(agent.local_candidates.is_empty());
         assert!(agent.remote_candidates.is_empty());

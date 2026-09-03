@@ -265,10 +265,26 @@ impl RecordingReader {
     }
 
     fn read_v1(data: Vec<u8>) -> Result<Self> {
-        let width = u32::from_le_bytes(data[OFFSET_WIDTH as usize..(OFFSET_WIDTH + 4) as usize].try_into().unwrap());
-        let height = u32::from_le_bytes(data[OFFSET_HEIGHT as usize..(OFFSET_HEIGHT + 4) as usize].try_into().unwrap());
-        let fps = u32::from_le_bytes(data[OFFSET_FPS as usize..(OFFSET_FPS + 4) as usize].try_into().unwrap());
-        let frame_count = u32::from_le_bytes(data[OFFSET_FRAME_COUNT as usize..(OFFSET_FRAME_COUNT + 4) as usize].try_into().unwrap());
+        let width = u32::from_le_bytes(
+            data[OFFSET_WIDTH as usize..(OFFSET_WIDTH + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let height = u32::from_le_bytes(
+            data[OFFSET_HEIGHT as usize..(OFFSET_HEIGHT + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let fps = u32::from_le_bytes(
+            data[OFFSET_FPS as usize..(OFFSET_FPS + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let frame_count = u32::from_le_bytes(
+            data[OFFSET_FRAME_COUNT as usize..(OFFSET_FRAME_COUNT + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
 
         Ok(Self {
             data,
@@ -291,12 +307,36 @@ impl RecordingReader {
             )));
         }
 
-        let width = u32::from_le_bytes(data[OFFSET_WIDTH as usize..(OFFSET_WIDTH + 4) as usize].try_into().unwrap());
-        let height = u32::from_le_bytes(data[OFFSET_HEIGHT as usize..(OFFSET_HEIGHT + 4) as usize].try_into().unwrap());
-        let fps = u32::from_le_bytes(data[OFFSET_FPS as usize..(OFFSET_FPS + 4) as usize].try_into().unwrap());
-        let frame_count = u32::from_le_bytes(data[OFFSET_FRAME_COUNT as usize..(OFFSET_FRAME_COUNT + 4) as usize].try_into().unwrap());
-        let audio_sample_rate = u32::from_le_bytes(data[OFFSET_AUDIO_SAMPLE_RATE as usize..(OFFSET_AUDIO_SAMPLE_RATE + 4) as usize].try_into().unwrap());
-        let audio_frame_count = u32::from_le_bytes(data[OFFSET_AUDIO_FRAME_COUNT as usize..(OFFSET_AUDIO_FRAME_COUNT + 4) as usize].try_into().unwrap());
+        let width = u32::from_le_bytes(
+            data[OFFSET_WIDTH as usize..(OFFSET_WIDTH + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let height = u32::from_le_bytes(
+            data[OFFSET_HEIGHT as usize..(OFFSET_HEIGHT + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let fps = u32::from_le_bytes(
+            data[OFFSET_FPS as usize..(OFFSET_FPS + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let frame_count = u32::from_le_bytes(
+            data[OFFSET_FRAME_COUNT as usize..(OFFSET_FRAME_COUNT + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let audio_sample_rate = u32::from_le_bytes(
+            data[OFFSET_AUDIO_SAMPLE_RATE as usize..(OFFSET_AUDIO_SAMPLE_RATE + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
+        let audio_frame_count = u32::from_le_bytes(
+            data[OFFSET_AUDIO_FRAME_COUNT as usize..(OFFSET_AUDIO_FRAME_COUNT + 4) as usize]
+                .try_into()
+                .unwrap(),
+        );
 
         // Find the audio offset by scanning through all video frames.
         let audio_offset = Self::find_audio_offset(&data, frame_count as usize);
@@ -321,7 +361,9 @@ impl RecordingReader {
             if offset + 12 > data.len() {
                 break;
             }
-            let data_len = u32::from_le_bytes(data[offset + 8..offset + 12].try_into().unwrap_or([0; 4])) as usize;
+            let data_len =
+                u32::from_le_bytes(data[offset + 8..offset + 12].try_into().unwrap_or([0; 4]))
+                    as usize;
             offset += 12 + data_len;
         }
         offset
@@ -359,7 +401,11 @@ impl RecordingReader {
 
     /// Iterate over all video frames.
     pub fn frames(&self) -> RecordingFrameIter<'_> {
-        let start = if self.is_v2 { HEADER_V2_SIZE } else { HEADER_V1_SIZE };
+        let start = if self.is_v2 {
+            HEADER_V2_SIZE
+        } else {
+            HEADER_V1_SIZE
+        };
         let end = if self.audio_offset > start {
             self.audio_offset
         } else {
@@ -404,8 +450,13 @@ impl<'a> Iterator for RecordingFrameIter<'a> {
             return None;
         }
 
-        let timestamp_ms = u64::from_le_bytes(self.data[self.offset..self.offset + 8].try_into().ok()?);
-        let data_len = u32::from_le_bytes(self.data[self.offset + 8..self.offset + 12].try_into().ok()?) as usize;
+        let timestamp_ms =
+            u64::from_le_bytes(self.data[self.offset..self.offset + 8].try_into().ok()?);
+        let data_len = u32::from_le_bytes(
+            self.data[self.offset + 8..self.offset + 12]
+                .try_into()
+                .ok()?,
+        ) as usize;
 
         let pixel_start = self.offset + 12;
         let pixel_end = pixel_start + data_len;
@@ -436,8 +487,13 @@ impl<'a> Iterator for AudioFrameIter<'a> {
             return None;
         }
 
-        let timestamp_ms = u64::from_le_bytes(self.data[self.offset..self.offset + 8].try_into().ok()?);
-        let data_len = u32::from_le_bytes(self.data[self.offset + 8..self.offset + 12].try_into().ok()?) as usize;
+        let timestamp_ms =
+            u64::from_le_bytes(self.data[self.offset..self.offset + 8].try_into().ok()?);
+        let data_len = u32::from_le_bytes(
+            self.data[self.offset + 8..self.offset + 12]
+                .try_into()
+                .ok()?,
+        ) as usize;
 
         let sample_start = self.offset + 12;
         let sample_end = sample_start + data_len;
@@ -449,7 +505,10 @@ impl<'a> Iterator for AudioFrameIter<'a> {
         let samples = self.data[sample_start..sample_end].to_vec();
         self.offset = sample_end;
 
-        Some(AudioFrame { timestamp_ms, samples })
+        Some(AudioFrame {
+            timestamp_ms,
+            samples,
+        })
     }
 }
 
@@ -540,7 +599,11 @@ mod tests {
     #[test]
     fn test_reader_invalid_magic() {
         let path = temp_recording_path("bad_magic.aldrec");
-        std::fs::write(&path, b"NOTREC\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").unwrap();
+        std::fs::write(
+            &path,
+            b"NOTREC\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        )
+        .unwrap();
 
         let result = RecordingReader::open(&path);
         assert!(result.is_err());
@@ -606,7 +669,10 @@ mod tests {
         recorder.write_frame(&frame_data, 0).unwrap();
 
         // Write audio frames.
-        let audio_data = vec![0.5f32; 480].iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
+        let audio_data = vec![0.5f32; 480]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect::<Vec<u8>>();
         recorder.write_audio_frame(&audio_data, 0).unwrap();
         recorder.write_audio_frame(&audio_data, 10).unwrap();
         assert_eq!(recorder.audio_frame_count(), 2);
@@ -671,7 +737,10 @@ mod tests {
 
         let mut recorder = recorder;
         let frame = vec![0u8; 16]; // 2x2 BGRA
-        let audio = [1.0f32; 48].iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
+        let audio = [1.0f32; 48]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect::<Vec<u8>>();
 
         // Write all video frames first, then audio frames.
         recorder.write_frame(&frame, 0).unwrap();
