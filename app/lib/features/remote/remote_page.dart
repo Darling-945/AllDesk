@@ -90,14 +90,15 @@ class _RemotePageState extends ConsumerState<RemotePage> {
     try {
       final frameData = await rust_api.pollVideoFrame();
       if (frameData != null && frameData.length > 8 && mounted) {
-        // First 4 bytes = width (u32 LE), next 4 bytes = height (u32 LE)
-        final widthBytes = frameData.sublist(0, 4);
-        final heightBytes = frameData.sublist(4, 8);
-        final width = (widthBytes[0]) | (widthBytes[1] << 8) | (widthBytes[2] << 16) | (widthBytes[3] << 24);
-        final height = (heightBytes[0]) | (heightBytes[1] << 8) | (heightBytes[2] << 16) | (heightBytes[3] << 24);
+        // First 4 bytes = width (u32 LE), next 4 = height (u32 LE).
+        // sublistView/ByteData.view are zero-copy — a full-frame sublist()
+        // here would memcopy several MB per frame.
+        final header = ByteData.sublistView(frameData, 0, 8);
+        final width = header.getUint32(0, Endian.little);
+        final height = header.getUint32(4, Endian.little);
 
         if (width > 0 && height > 0) {
-          final bgraData = frameData.sublist(8);
+          final bgraData = Uint8List.sublistView(frameData, 8);
           final image = await _bgraToImage(bgraData, width, height);
           if (image != null && mounted) {
             setState(() {

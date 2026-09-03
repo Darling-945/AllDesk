@@ -1,9 +1,17 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alldesk_core::{Error, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
+
+/// Number of samples buffered before playback starts consuming (~60 ms of
+/// audio at the stream's rate). Without this prefill the buffer starts empty
+/// and the very first network jitter is rendered as an audible gap.
+fn prefill_samples(sample_rate: u32) -> usize {
+    (sample_rate as usize * 60 / 1000).max(1)
+}
 
 /// Plays audio to the default output device at 48 kHz mono f32.
 ///
@@ -78,6 +86,11 @@ impl AudioPlayer {
 
         let channels = use_config.channels as usize;
         let buf = buffer.clone();
+        // Flips to true once the jitter buffer has been filled for the first
+        // time; playback then runs without the prefill gate (underruns fall
+        // back to per-sample silence, as before).
+        let started = Arc::new(AtomicBool::new(false));
+        let prefill_target = prefill_samples(sample_rate);
 
         let stream = device
             .build_output_stream(
@@ -91,6 +104,16 @@ impl AudioPlayer {
                             return;
                         }
                     };
+
+                    if !started.load(Ordering::Relaxed) {
+                        if guard.len() < prefill_target {
+                            // Still filling the jitter buffer — output silence
+                            // instead of consuming the samples we're saving up.
+                            data.fill(0.0);
+                            return;
+                        }
+                        started.store(true, Ordering::Relaxed);
+                    }
 
                     if channels == 1 {
                         // Simple mono: one sample per frame.
@@ -192,6 +215,16 @@ impl Drop for AudioPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_prefill_samples_is_about_60ms() {
+        assert_eq!(prefill_samples(48_000), 2880);
+        assert_eq!(prefill_samples(44_100), 2646);
+        assert_eq!(prefill_samples(16_000), 960);
+        // Degenerate rates must still yield at least one sample.
+        assert_eq!(prefill_samples(0), 1);
+        assert_eq!(prefill_samples(1), 1);
+    }
 
     #[test]
     fn test_player_play_invalid_data() {

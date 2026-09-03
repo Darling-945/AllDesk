@@ -1087,40 +1087,58 @@ fn decode_special_key(code: u8) -> KeyCode {
     }
 }
 
-/// Poll for the next available video frame (viewer side).
+/// Poll for the newest available video frame (viewer side).
+/// Drains any queued frames and returns only the latest one — real-time
+/// video should skip stale frames after a UI stall, not replay the backlog.
 /// Returns [width_u32_le, height_u32_le, ...bgra_data] or None.
 pub async fn poll_video_frame() -> Option<Vec<u8>> {
     let mut rx_guard = frame_rx_lock().lock().await;
     let rx = rx_guard.as_mut()?;
-    match rx.try_recv() {
-        Ok(frame) => {
-            // Track that video is flowing
-            if let Ok(mut state) = app_state().try_write() {
-                state.video_active = true;
-                state.frames_received += 1;
-                if let Ok(mut q) = state.quality.lock() {
-                    q.record_frame_received();
-                }
+
+    let mut latest: Option<crate::pipeline::VideoFrame> = None;
+    let mut skipped = 0u64;
+    loop {
+        match rx.try_recv() {
+            Ok(frame) => {
+                // A previously received frame is superseded by this one.
+                skipped += latest.is_some() as u64;
+                latest = Some(frame);
             }
-            let mut out = Vec::with_capacity(8 + frame.bgra_data.len());
-            out.extend_from_slice(&frame.width.to_le_bytes());
-            out.extend_from_slice(&frame.height.to_le_bytes());
-            out.extend_from_slice(&frame.bgra_data);
-            Some(out)
-        }
-        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
-            // The UI consumed too slowly; skipped frames count as dropped.
-            if let Ok(state) = app_state().try_write() {
-                if let Ok(mut q) = state.quality.lock() {
-                    for _ in 0..skipped {
-                        q.record_frame_dropped();
-                    }
-                }
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(missed)) => {
+                // The channel itself dropped frames; keep draining — the
+                // newest data still follows behind the lag.
+                skipped += missed;
             }
-            None
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            | Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
         }
-        Err(_) => None,
     }
+
+    // Superseded/lagged frames count as dropped.
+    if skipped > 0 {
+        if let Ok(state) = app_state().try_write() {
+            if let Ok(mut q) = state.quality.lock() {
+                for _ in 0..skipped {
+                    q.record_frame_dropped();
+                }
+            }
+        }
+    }
+
+    let frame = latest?;
+    // Track that video is flowing
+    if let Ok(mut state) = app_state().try_write() {
+        state.video_active = true;
+        state.frames_received += 1;
+        if let Ok(mut q) = state.quality.lock() {
+            q.record_frame_received();
+        }
+    }
+    let mut out = Vec::with_capacity(8 + frame.bgra_data.len());
+    out.extend_from_slice(&frame.width.to_le_bytes());
+    out.extend_from_slice(&frame.height.to_le_bytes());
+    out.extend_from_slice(&frame.bgra_data);
+    Some(out)
 }
 
 /// Send a mouse event to the remote peer (viewer side).

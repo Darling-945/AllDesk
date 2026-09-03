@@ -48,10 +48,6 @@ pub struct DxgiCapturer {
     staging_texture: Option<ID3D11Texture2D>,
     /// Cached dimensions (width, height) of the current staging texture.
     staging_dims: (u32, u32),
-    /// Target frame interval for frame rate limiting.
-    frame_interval: Option<Duration>,
-    /// Timestamp of the last captured frame for rate limiting.
-    last_frame_time: Option<Instant>,
     /// Number of consecutive reinit attempts to avoid infinite loops.
     reinit_attempts: u32,
 }
@@ -80,8 +76,6 @@ impl DxgiCapturer {
             needs_reinit: false,
             staging_texture: None,
             staging_dims: (0, 0),
-            frame_interval: None,
-            last_frame_time: None,
             reinit_attempts: 0,
         }
     }
@@ -451,15 +445,12 @@ impl CaptureProvider for DxgiCapturer {
         self.needs_reinit = false;
         self.reinit_attempts = 0;
 
-        // Set frame rate limiting based on config fps.
-        let fps = self.config.as_ref().map(|c| c.fps).unwrap_or(30);
-        if fps > 0 {
-            self.frame_interval = Some(Duration::from_secs_f64(1.0 / fps as f64));
-        } else {
-            self.frame_interval = None;
-        }
-        self.last_frame_time = None;
-
+        // Note: capture rate is NOT limited here. The sender pipeline paces
+        // next_frame() calls; a second, independent rate limiter inside the
+        // capturer drifts against the pipeline's clock (frame completion
+        // times shift with capture/encode duration) and effectively halves
+        // the output framerate. AcquireNextFrame itself only ever yields
+        // the newest desktop frame, so faster polling cannot oversample.
         info!("DXGI desktop duplication initialized successfully");
         Ok(())
     }
@@ -484,8 +475,6 @@ impl CaptureProvider for DxgiCapturer {
         self.needs_reinit = false;
         self.staging_texture = None;
         self.staging_dims = (0, 0);
-        self.frame_interval = None;
-        self.last_frame_time = None;
         self.reinit_attempts = 0;
 
         Ok(())
@@ -527,14 +516,6 @@ impl CaptureProvider for DxgiCapturer {
             info!("DXGI reinitialization successful");
             // Return None to signal the caller to try again on the next poll.
             return Ok(None);
-        }
-
-        // Frame rate limiting: skip if not enough time has elapsed.
-        if let (Some(interval), Some(last)) = (self.frame_interval, self.last_frame_time) {
-            let elapsed = last.elapsed();
-            if elapsed < interval {
-                return Ok(None);
-            }
         }
 
         // Clone the duplication COM pointer so we don't hold an immutable borrow
@@ -703,8 +684,6 @@ impl CaptureProvider for DxgiCapturer {
         let show_cursor = self.config.as_ref().map(|c| c.show_cursor).unwrap_or(true);
         let cursor = extract_cursor_info(&duplication, &frame_info, show_cursor);
 
-        // Update rate limiting state.
-        self.last_frame_time = Some(Instant::now());
         self.reinit_attempts = 0;
 
         let monitor_id = self.config.as_ref().map(|c| c.monitor_id).unwrap_or(0);
