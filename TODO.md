@@ -4,19 +4,20 @@
 
 | 优先级 | 缺口 | 状态 | 说明 |
 |--------|------|------|------|
-| **P0** | 音频实时流未接入 QUIC 管线 | [ ] | capture/playback 已实现，但未桥接到网络传输 |
-| **P0** | 剪贴板同步未接入 QUIC 通道 | [ ] | sanitize 已有，缺同步协议和 QUIC Channel::Clipboard 路径 |
-| **P1** | 文件传输未接入 FFI 和 Flutter UI | [ ] | Rust 端完整，Flutter 端仅占位页 |
+| **P0** | 音频实时流未接入 QUIC 管线 | [x] | AudioSenderPipeline + AudioReceiverPipeline 已桥接到 QUIC Audio 通道 |
+| **P0** | 剪贴板同步未接入 QUIC 通道 | [x] | ClipboardPipeline 双向同步已桥接到 QUIC Clipboard 通道 |
+| **P0** | Windows↔Android 连接和画面显示 | [x] | ReceiverPipeline 增加超时、状态追踪、增强日志 |
+| **P1** | 文件传输未接入 FFI 和 Flutter UI | [x] | File 通道管线 + FFI + Flutter 文件选择/进度页 |
 | **P1** | P2P 打洞（ICE）未接入连接流程 | [ ] | IceAgent 已实现，ffi/api.rs 仅直连，无打洞逻辑 |
-| **P1** | 自动重连未接入 FFI | [ ] | ReconnectManager 已实现，未被任何 API 使用 |
+| **P1** | 自动重连未接入 FFI | [x] | 断线后 supervisor 自动重建会话（退避重试 + 代数防陈旧） |
 | **P1** | 端到端加密未在传输层启用 | [ ] | E2ECrypto 已实现，QuicTransport 未调用加密 |
 | **P1** | 带宽估计未接入发送管线 | [ ] | BandwidthEstimator 已实现，SenderPipeline 未做自适应码率 |
-| **P1** | 流控未在传输层使用 | [ ] | FlowController 已实现，QuicTransport 未使用 |
-| **P2** | 连接质量未暴露到 Flutter UI | [ ] | QualityCollector 已实现，无 FFI 导出函数 |
+| **P1** | 流控未在传输层使用 | [x] | SenderPipeline 接入 FlowController：背压时丢旧帧 |
+| **P2** | 连接质量未暴露到 Flutter UI | [x] | 每秒采样 RTT/丢包/带宽，get_connection_quality 输出真实指标 |
 | **P2** | macOS/Linux 屏幕捕获缺失 | [ ] | lib.rs 中已注释掉 quartz/x11/wayland 模块 |
 | **P2** | GPU 硬件加速编解码 | [ ] | 纯软件编解码，无 NVENC/QSV/VideoToolbox |
-| **P3** | 白板绘图控件 | [ ] | Flutter WhiteboardOverlay 仅占位 |
-| **P3** | 录屏播放器 | [ ] | 无 ALDREC/WebM 回放 UI |
+| **P3** | 白板绘图控件 | 已移除 | crate 与占位 UI 已删除（git 历史可找回） |
+| **P3** | 录屏播放器 | [ ] | 会话录制已接入（VP9 直存 .aldrec），回放 UI 仍缺失 |
 | **P3** | 国际化 (i18n) | [ ] | 所有文案硬编码中文 |
 
 ## 编译警告清理（25 个 warning → 0）

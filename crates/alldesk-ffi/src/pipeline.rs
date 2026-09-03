@@ -1,8 +1,12 @@
 use alldesk_capture::capture::{CaptureConfig, CaptureProvider, CapturedFrame, FrameData};
+use alldesk_platform::audio::{AudioCapturer, AudioPlayer};
+use alldesk_platform::clipboard::{ClipboardMonitor, ClipboardSync};
 use alldesk_core::Result;
 use alldesk_net::channel::Channel;
+use alldesk_net::flow::{FlowConfig, FlowController};
 use alldesk_net::transport::QuicTransport;
 use alldesk_net::Transport;
+use alldesk_recording::Recorder;
 use tokio::sync::broadcast;
 
 #[cfg(target_os = "windows")]
@@ -32,6 +36,9 @@ pub struct SenderPipeline {
     transport: QuicTransport,
     fps: u32,
     encoder: Option<Vp9Encoder>,
+    /// Bounded send queue: when the network can't keep up, stale frames are
+    /// dropped instead of unbounded buffering.
+    flow: FlowController,
 }
 
 unsafe impl Send for SenderPipeline {}
@@ -72,7 +79,32 @@ impl SenderPipeline {
             }
         };
 
-        Ok(Self { capturer, transport, fps, encoder })
+        Ok(Self { capturer, transport, fps, encoder, flow: Self::build_flow(mon.width, mon.height) })
+    }
+
+    /// Flow control sized for this stream: messages up to one raw frame,
+    /// a small queue, and a short TTL so only recent frames are sent.
+    fn build_flow(width: u32, height: u32) -> FlowController {
+        FlowController::with_config(FlowConfig {
+            send_buffer_capacity: 4,
+            recv_buffer_capacity: 4,
+            max_message_size: width as usize * height as usize * 4 + 4096,
+            message_ttl: std::time::Duration::from_millis(500),
+        })
+    }
+
+    /// Enqueue one video message, dropping it (or stale queued frames) when
+    /// the network is backpressured, then drain everything that survived.
+    async fn send_video_message(&mut self, data: Vec<u8>) {
+        if !self.flow.try_send(Channel::Video, data) {
+            // Queue full: drop this frame — real-time video prefers fresh.
+            return;
+        }
+        while let Some((channel, data)) = self.flow.poll_send() {
+            if let Err(e) = self.transport.send(channel, &data).await {
+                tracing::warn!("send video: {}", e);
+            }
+        }
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -122,7 +154,8 @@ impl SenderPipeline {
         out.extend_from_slice(&frame.height.to_le_bytes());
         out.push(FRAME_TYPE_VP9);
         out.extend_from_slice(&pkt.data);
-        self.transport.send(Channel::Video, &out).await
+        self.send_video_message(out).await;
+        Ok(())
     }
 
     async fn send_raw_frame(&mut self, frame: &CapturedFrame) -> Result<()> {
@@ -137,38 +170,70 @@ impl SenderPipeline {
         out.push(FRAME_TYPE_RAW);
         out.extend_from_slice(&bgra);
 
-        if let Err(e) = self.transport.send(Channel::Video, &out).await {
-            tracing::warn!("send raw frame: {}", e);
-        }
+        self.send_video_message(out).await;
         Ok(())
     }
 }
+
+/// Maximum time to wait for the sender to open the Video stream.
+const ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Orchestrates QUIC recv → VP9 decode → push BGRA frames to listeners.
 pub struct ReceiverPipeline {
     transport: QuicTransport,
     frame_tx: broadcast::Sender<VideoFrame>,
     decoder: Option<Vp9Decoder>,
+    /// Active recorder and when its recording started. Pulled fresh from the
+    /// global slot every frame so recording can start/stop mid-session.
+    recorder: Option<(std::sync::Arc<std::sync::Mutex<Recorder>>, std::time::Instant)>,
 }
 
 impl ReceiverPipeline {
     pub fn new(transport: QuicTransport, _width: u32, _height: u32) -> (Self, broadcast::Receiver<VideoFrame>) {
         let (tx, rx) = broadcast::channel(8);
-        let this = Self { transport, frame_tx: tx, decoder: None };
+        let this = Self { transport, frame_tx: tx, decoder: None, recorder: None };
         (this, rx)
     }
 
-    pub async fn run(&mut self) -> Result<()> {
-        let ch = self.transport.accept_stream().await?;
-        if ch != Channel::Video {
-            return Err(alldesk_core::Error::Network(
-                format!("expected Video channel, got {:?}", ch)
-            ));
+    /// Append an encoded frame to the session recorder, if one is active.
+    /// Only VP9 frames are stored (raw BGRA would be ≈250 MB/s at 1080p30).
+    fn record_encoded_frame(&mut self, width: u32, height: u32, payload: &[u8]) {
+        let Some(rec) = crate::api::current_recorder() else { return };
+        // New recorder instance → restart the timestamp base.
+        if self.recorder.as_ref().is_none_or(|(r, _)| !std::sync::Arc::ptr_eq(r, &rec)) {
+            self.recorder = Some((rec, std::time::Instant::now()));
         }
+        let Some((rec, start)) = self.recorder.as_ref() else { return };
+        let ts = start.elapsed().as_millis() as u64;
+        if let Ok(mut r) = rec.lock() {
+            // First frame (or a resolution change) fixes the header dims.
+            if r.width() != width || r.height() != height {
+                r.set_dimensions(width, height);
+                r.set_fps(30);
+            }
+            if let Err(e) = r.write_frame(payload, ts) {
+                tracing::warn!("record frame: {}", e);
+            }
+        }
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        // Other pipelines (input, clipboard) share the connection; accept only
+        // the Video stream and leave the rest to their own accept_channel calls.
+        tokio::time::timeout(ACCEPT_TIMEOUT, self.transport.accept_channel(Channel::Video))
+            .await
+            .map_err(|_| alldesk_core::Error::Network(
+                "timed out waiting for sender to open Video stream (15s)".into()
+            ))?
+            .map_err(|e| alldesk_core::Error::Network(format!("accept Video stream: {}", e)))?;
+
+        tracing::info!("Video stream accepted, starting recv loop");
+        let mut consecutive_errors = 0u32;
 
         loop {
             match self.transport.recv(Channel::Video).await {
                 Ok(data) if data.len() > 9 => {
+                    consecutive_errors = 0;
                     let width = u32::from_le_bytes(data[0..4].try_into().unwrap_or([0; 4]));
                     let height = u32::from_le_bytes(data[4..8].try_into().unwrap_or([0; 4]));
                     let frame_type = data[8];
@@ -176,6 +241,10 @@ impl ReceiverPipeline {
 
                     if width == 0 || height == 0 {
                         continue;
+                    }
+
+                    if frame_type == FRAME_TYPE_VP9 {
+                        self.record_encoded_frame(width, height, payload);
                     }
 
                     let bgra_data = match frame_type {
@@ -190,7 +259,11 @@ impl ReceiverPipeline {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    tracing::warn!("recv video: {}", e);
+                    consecutive_errors += 1;
+                    if consecutive_errors > 60 {
+                        tracing::warn!("recv video failed repeatedly: {}", e);
+                        return Err(e);
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(16)).await;
                 }
             }
@@ -224,6 +297,227 @@ impl ReceiverPipeline {
                 tracing::debug!("VP9 decode: {}", e);
                 Vec::new()
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audio pipelines
+// ---------------------------------------------------------------------------
+
+/// Magic prefix of the stream-format header the audio sender transmits before
+/// any PCM data: [magic: 4 bytes] [sample_rate: u32 LE]. Chosen so random PCM
+/// data is vanishingly unlikely to collide with it.
+const AUDIO_HEADER_MAGIC: [u8; 4] = [0xA1, 0xD1, 0x0D, 0x5A];
+
+/// Largest PCM piece sent as one QUIC datagram (must stay below the ~1200
+/// byte path MTU). Multiple of 4 so every piece holds whole f32 samples.
+const AUDIO_MAX_PIECE: usize = 1152;
+
+/// Host side: captures audio from microphone → sends over QUIC Audio channel.
+pub struct AudioSenderPipeline {
+    capturer: AudioCapturer,
+    transport: QuicTransport,
+}
+
+unsafe impl Send for AudioSenderPipeline {}
+
+impl AudioSenderPipeline {
+    pub fn new(transport: QuicTransport) -> Result<Self> {
+        let capturer = AudioCapturer::new()?;
+        Ok(Self { capturer, transport })
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        self.capturer.start()?;
+        let rate = self.capturer.sample_rate();
+        tracing::info!("audio sender pipeline started ({} Hz)", rate);
+
+        // Tell the receiver which rate we capture at so it can play at the
+        // right speed (the capture device may not support 48 kHz).
+        let mut header = AUDIO_HEADER_MAGIC.to_vec();
+        header.extend_from_slice(&rate.to_le_bytes());
+        self.transport.send(Channel::Audio, &header).await?;
+
+        loop {
+            match self.capturer.recv_chunk() {
+                Some(chunk) => {
+                    // Split into datagram-sized pieces; raw PCM has no framing,
+                    // so the receiver can play the pieces back-to-back.
+                    // Send errors (connection closed) are fatal for this loop.
+                    for piece in chunk.chunks(AUDIO_MAX_PIECE) {
+                        self.transport.send(Channel::Audio, piece).await?;
+                    }
+                }
+                None => {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
+        }
+    }
+}
+
+/// Viewer side: receives audio from QUIC Audio channel → plays to speaker.
+pub struct AudioReceiverPipeline {
+    transport: QuicTransport,
+}
+
+unsafe impl Send for AudioReceiverPipeline {}
+
+impl AudioReceiverPipeline {
+    pub fn new(transport: QuicTransport) -> Self {
+        Self { transport }
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        tracing::info!("audio receiver pipeline started");
+        let mut player: Option<AudioPlayer> = None;
+
+        loop {
+            match self.transport.recv(Channel::Audio).await {
+                Ok(data) if data.len() == 8 && data[..4] == AUDIO_HEADER_MAGIC => {
+                    let fallback_rate = 48_000u32.to_le_bytes();
+                    let rate = u32::from_le_bytes(data[4..8].try_into().unwrap_or(fallback_rate));
+                    tracing::info!("audio receiver: sender sample rate {} Hz", rate);
+                    match AudioPlayer::with_sample_rate(rate) {
+                        Ok(p) => player = Some(p),
+                        Err(e) => tracing::warn!("audio player init ({} Hz): {}", rate, e),
+                    }
+                }
+                Ok(data) => {
+                    if data.is_empty() || data.len() % 4 != 0 {
+                        continue;
+                    }
+                    if player.is_none() {
+                        // Sender did not announce its rate — assume the default.
+                        match AudioPlayer::new() {
+                            Ok(p) => player = Some(p),
+                            Err(e) => {
+                                tracing::warn!("audio player init: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                    if let Err(e) = player.as_ref().unwrap().play(&data) {
+                        tracing::debug!("audio play: {}", e);
+                    }
+                }
+                Err(e) => {
+                    // Transport errors (connection closed) are fatal here; without
+                    // this the loop would spin forever after disconnect.
+                    tracing::debug!("recv audio: {}", e);
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard sync pipeline
+// ---------------------------------------------------------------------------
+
+/// Bidirectional clipboard sync: poll the local clipboard for changes and
+/// send them to the peer, while a dedicated receive task applies incoming
+/// updates. Both host and viewer use the same logic; the initiator opens
+/// the stream.
+///
+/// The receive loop deliberately runs as its own task: awaiting `recv()` in a
+/// `tokio::select!` loop is not cancellation-safe (a partial length-prefix
+/// read is dropped whenever the timer branch wins), which would permanently
+/// desynchronize the length-prefixed stream framing.
+pub struct ClipboardPipeline {
+    transport: QuicTransport,
+    monitor: std::sync::Arc<tokio::sync::Mutex<ClipboardMonitor>>,
+    sync: std::sync::Arc<tokio::sync::Mutex<ClipboardSync>>,
+    /// If true, this side opens the stream; otherwise it accepts.
+    is_initiator: bool,
+}
+
+unsafe impl Send for ClipboardPipeline {}
+
+impl ClipboardPipeline {
+    pub fn new(transport: QuicTransport, is_initiator: bool) -> Result<Self> {
+        let monitor = ClipboardMonitor::new()?;
+        let sync = ClipboardSync::new()?;
+        Ok(Self {
+            transport,
+            monitor: std::sync::Arc::new(tokio::sync::Mutex::new(monitor)),
+            sync: std::sync::Arc::new(tokio::sync::Mutex::new(sync)),
+            is_initiator,
+        })
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        // Establish the stream
+        if self.is_initiator {
+            // Send a handshake to open the stream
+            self.transport.send(Channel::Clipboard, &[0x00]).await?;
+            tracing::info!("clipboard pipeline: stream opened (initiator)");
+        } else {
+            // Input and Video pipelines share this connection; wait for OUR
+            // stream instead of grabbing whatever arrives first.
+            tokio::time::timeout(ACCEPT_TIMEOUT, self.transport.accept_channel(Channel::Clipboard))
+                .await
+                .map_err(|_| alldesk_core::Error::Network(
+                    "timed out waiting for Clipboard stream (15s)".into()
+                ))?
+                .map_err(|e| alldesk_core::Error::Network(format!("accept Clipboard: {}", e)))?;
+            // Read and discard the handshake byte
+            let _ = self.transport.recv(Channel::Clipboard).await;
+            tracing::info!("clipboard pipeline: stream accepted");
+        }
+
+        // Remote → local clipboard. Runs on a clone of the transport (the
+        // stream table is shared), so receive and send use different halves
+        // of the stream and never block each other.
+        let mut rx_transport = self.transport.clone();
+        let monitor = std::sync::Arc::clone(&self.monitor);
+        let sync = std::sync::Arc::clone(&self.sync);
+        tokio::spawn(async move {
+            loop {
+                match rx_transport.recv(Channel::Clipboard).await {
+                    Ok(data) if data.len() > 1 => {
+                        // Lock monitor first, then sync — same order as the
+                        // sender loop below — to avoid a lock-order deadlock.
+                        let mut mon = monitor.lock().await;
+                        let mut sy = sync.lock().await;
+                        if let Err(e) = sy.receive_clipboard(&mut mon, &data).await {
+                            tracing::debug!("apply remote clipboard: {}", e);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::debug!("recv clipboard: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Local clipboard → remote, polled.
+        let mut poll_interval = tokio::time::interval(std::time::Duration::from_millis(250));
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            poll_interval.tick().await;
+
+            let content = {
+                let mut mon = self.monitor.lock().await;
+                if !mon.has_changed() {
+                    continue;
+                }
+                match mon.get_content() {
+                    Ok(Some(content)) => content,
+                    _ => continue,
+                }
+            };
+
+            if self.sync.lock().await.is_remote_update(&content) {
+                continue;
+            }
+
+            let data = ClipboardSync::serialize_content(&content);
+            self.transport.send(Channel::Clipboard, &data).await?;
         }
     }
 }

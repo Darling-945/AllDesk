@@ -165,7 +165,7 @@ fn luhn_check(digits: &[u8]) -> bool {
         }
         sum += n;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Check if the text looks like a bearer token, JWT, or API key.
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_image_ok() {
-        let result = sanitize_image(4, 4, &vec![0u8; 64]);
+        let result = sanitize_image(4, 4, &[0u8; 64]);
         assert!(matches!(result, SanitizeResult::Allowed(_)));
     }
 
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_image_size_mismatch() {
-        let result = sanitize_image(4, 4, &vec![0u8; 32]);
+        let result = sanitize_image(4, 4, &[0u8; 32]);
         assert!(matches!(result, SanitizeResult::Blocked(_)));
     }
 

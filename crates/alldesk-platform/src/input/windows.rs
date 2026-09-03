@@ -3,7 +3,7 @@
 use alldesk_core::Error;
 use tracing::{instrument, warn};
 
-use crate::controller::{
+use crate::input::controller::{
     ButtonState, InputController, KeyCode, KeyState, MouseButton,
 };
 
@@ -286,8 +286,8 @@ impl InputController for WindowsInputController {
         Ok(())
     }
 
-    fn get_displays(&self) -> Vec<crate::controller::DisplayRect> {
-        use crate::controller::DisplayRect;
+    fn get_displays(&self) -> Vec<crate::input::controller::DisplayRect> {
+        use crate::input::controller::DisplayRect;
         let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
         let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
         let w = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
@@ -358,9 +358,9 @@ mod tests {
     fn test_char_to_utf16_surrogates_supplementary() {
         // Supplementary character U+1F600 (😀) should produce a surrogate pair
         let (first, second) = char_to_utf16_surrogates('\u{1F600}');
-        assert!(first >= 0xD800 && first <= 0xDBFF); // high surrogate
+        assert!((0xD800..=0xDBFF).contains(&first)); // high surrogate
         let low = second.expect("supplementary char should have low surrogate");
-        assert!(low >= 0xDC00 && low <= 0xDFFF); // low surrogate
+        assert!((0xDC00..=0xDFFF).contains(&low)); // low surrogate
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn test_controller_creation() {
         let _controller = WindowsInputController::new();
-        let _controller = WindowsInputController::default();
+        let _controller = WindowsInputController;
     }
 
     #[test]

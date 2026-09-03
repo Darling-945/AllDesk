@@ -6,9 +6,9 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `app_state`, `ensure_peer_id`, `local_ip_addresses`, `start_server_internal`
+// These functions are ignored because they are not marked as `pub`: `app_state`, `current_recorder`, `decode_special_key`, `ensure_peer_id`, `frame_rx_lock`, `handle_key_event`, `handle_mouse_event`, `handle_scroll_event`, `input_transport_lock`, `install_viewer_session`, `local_ip_addresses`, `received_files_dir`, `record_pipeline_error`, `recorder_lock`, `run_file_receiver`, `run_input_handler`, `run_quality_sampler`, `sanitize_remote_filename`, `send_file_session`, `start_server_internal`, `supervise_connection`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AppState`, `CachedPeer`, `ClientState`, `ServerState`, `SessionState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Get the library version
 Future<String> getVersion() => RustLib.instance.api.crateApiGetVersion();
@@ -18,6 +18,7 @@ Future<String> getVersion() => RustLib.instance.api.crateApiGetVersion();
 Future<String> init() => RustLib.instance.api.crateApiInit();
 
 /// Return currently known peers from the background discovery cache.
+/// When timeout_secs > 0, also performs an active broadcast scan.
 Future<List<PeerInfo>> discoverPeers({required BigInt timeoutSecs}) =>
     RustLib.instance.api.crateApiDiscoverPeers(timeoutSecs: timeoutSecs);
 
@@ -45,6 +46,8 @@ Future<String> runDiagnostics() =>
     RustLib.instance.api.crateApiRunDiagnostics();
 
 /// Start sending screen capture to the connected peer (host side).
+/// NOTE: The server now auto-accepts connections in `start_server_internal()`.
+/// This function is kept for backward compatibility but is no longer required.
 Future<String> startScreenStream(
         {required int bitrateKbps, required int fps}) =>
     RustLib.instance.api
@@ -64,16 +67,96 @@ Future<void> sendMouseEvent(
 Future<void> sendScroll({required double dy}) =>
     RustLib.instance.api.crateApiSendScroll(dy: dy);
 
+/// Send a key event to the remote peer (viewer side).
+/// For char keys: key_type="char", key is the unicode codepoint.
+/// For special keys: key_type="special", key is the special key code.
+/// pressed: true = key down, false = key up.
+Future<void> sendKeyEvent(
+        {required String keyType, required int key, required bool pressed}) =>
+    RustLib.instance.api
+        .crateApiSendKeyEvent(keyType: keyType, key: key, pressed: pressed);
+
+/// Get connection quality metrics and stream status.
+/// Returns a JSON string with connection state, video status and real
+/// transport metrics (RTT / packet loss / bandwidth) from the session sampler.
+Future<String> getConnectionQuality() =>
+    RustLib.instance.api.crateApiGetConnectionQuality();
+
+/// Send a local file to the connected peer (viewer → host).
+/// Returns immediately; poll progress with `get_file_transfer_status`.
+Future<String> sendFileToPeer({required String path}) =>
+    RustLib.instance.api.crateApiSendFileToPeer(path: path);
+
+/// Current file transfer progress as JSON
+/// ({active, direction, filename, transferred, total, error}).
+Future<String> getFileTransferStatus() =>
+    RustLib.instance.api.crateApiGetFileTransferStatus();
+
+/// Start recording the remote session (VP9-encoded frames) to `path`.
+Future<String> startSessionRecording({required String path}) =>
+    RustLib.instance.api.crateApiStartSessionRecording(path: path);
+
+/// Stop recording and finalize the file. Returns the output path.
+Future<String> stopSessionRecording() =>
+    RustLib.instance.api.crateApiStopSessionRecording();
+
 /// Stub for non-Android platforms.
-Future<void> pushAndroidFrame(
+bool pushAndroidFrame(
         {required List<int> bgraData,
         required int width,
         required int height}) =>
     RustLib.instance.api.crateApiPushAndroidFrame(
         bgraData: bgraData, width: width, height: height);
 
+/// Get Android frame capture statistics: (frames_received, frames_dropped).
+(BigInt, BigInt) getAndroidFrameStats() =>
+    RustLib.instance.api.crateApiGetAndroidFrameStats();
+
 /// Stop all streaming (both sender and receiver).
 Future<String> stopStream() => RustLib.instance.api.crateApiStopStream();
+
+/// Progress of an ongoing file transfer, surfaced to Flutter as JSON.
+class FileTransferProgress {
+  final bool active;
+  final String direction;
+  final String filename;
+  final BigInt transferred;
+  final BigInt total;
+  final String? error;
+
+  const FileTransferProgress({
+    required this.active,
+    required this.direction,
+    required this.filename,
+    required this.transferred,
+    required this.total,
+    this.error,
+  });
+
+  static Future<FileTransferProgress> default_() =>
+      RustLib.instance.api.crateApiFileTransferProgressDefault();
+
+  @override
+  int get hashCode =>
+      active.hashCode ^
+      direction.hashCode ^
+      filename.hashCode ^
+      transferred.hashCode ^
+      total.hashCode ^
+      error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FileTransferProgress &&
+          runtimeType == other.runtimeType &&
+          active == other.active &&
+          direction == other.direction &&
+          filename == other.filename &&
+          transferred == other.transferred &&
+          total == other.total &&
+          error == other.error;
+}
 
 /// A discovered peer on the LAN
 class PeerInfo {

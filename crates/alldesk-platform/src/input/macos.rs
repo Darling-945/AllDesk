@@ -13,7 +13,7 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use tracing::{instrument, warn};
 
-use crate::controller::{ButtonState, InputController, KeyCode, KeyState, MouseButton};
+use crate::input::controller::{ButtonState, InputController, KeyCode, KeyState, MouseButton};
 
 pub struct MacInputController {
     source: CGEventSource,

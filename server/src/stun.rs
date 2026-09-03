@@ -201,7 +201,7 @@ fn build_binding_response(transaction_id: &[u8], mapped_addr: SocketAddr) -> Opt
     attrs.extend_from_slice(software);
     // Pad to 4-byte boundary
     let padding = padded_len as usize - software.len();
-    attrs.extend(std::iter::repeat(0u8).take(padding));
+    attrs.extend(std::iter::repeat_n(0u8, padding));
 
     // Calculate total message length (header is 20 bytes)
     let msg_len = attrs.len() as u16;

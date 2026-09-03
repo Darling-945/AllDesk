@@ -158,7 +158,7 @@ pub async fn run_turn_server(port: u16, shutdown: Arc<AtomicBool>) -> anyhow::Re
                 let (n, from) = result?;
                 // Incoming data on relay socket - find the allocation and forward to client.
                 let st = state.lock().await;
-                for (_, alloc) in &st.allocations {
+                for alloc in st.allocations.values() {
                     if alloc.relayed_addr.port() == from.port() {
                         // Send DATA indication to client.
                         let data_ind = build_data_indication(&from, &relay_buf[..n]);
@@ -204,7 +204,7 @@ async fn handle_allocate(
 
     // Parse requested lifetime.
     let requested_lifetime = parse_u32_attr(data, ATTR_LIFETIME).unwrap_or(DEFAULT_LIFETIME_SECS);
-    let lifetime = requested_lifetime.min(3600).max(60);
+    let lifetime = requested_lifetime.clamp(60, 3600);
 
     // Assign a relay address.
     let relay_port = st.relay_socket.local_addr()
@@ -260,7 +260,7 @@ async fn handle_refresh(
                 info!("TURN allocation deleted for {}", from);
                 lifetime
             } else {
-                let lt = requested_lifetime.min(3600).max(60);
+                let lt = requested_lifetime.clamp(60, 3600);
                 alloc.expires_at = Instant::now() + Duration::from_secs(lt as u64);
                 lt
             }
@@ -278,21 +278,20 @@ async fn handle_refresh(
 }
 
 async fn handle_create_permission(
-    _data: &[u8],
+    data: &[u8],
     from: SocketAddr,
     txn_id: &[u8; 12],
     socket: &Arc<UdpSocket>,
     state: &Arc<Mutex<TurnServerState>>,
 ) {
-    let mut st = state.lock().await;
-    let alloc = st.allocations.values_mut().find(|a| a.client_addr == from);
+    // Grant the requested peer permission so handle_send_indication accepts
+    // the client's relayed traffic.
+    let peer_addr = parse_xor_peer_address(data);
 
-    if let Some(alloc) = Some(alloc) {
-        // Parse XOR-PEER-ADDRESS attributes and add to permissions.
-        // For simplicity, allow all peers.
-        if let Some(alloc) = alloc {
-            // Note: real impl would parse peer addresses from the message.
-            let _ = alloc; // already borrowed
+    let mut st = state.lock().await;
+    if let Some(alloc) = st.allocations.values_mut().find(|a| a.client_addr == from) {
+        if let Some(peer) = peer_addr {
+            alloc.permissions.push(peer);
         }
     }
 
@@ -314,7 +313,7 @@ async fn handle_channel_bind(
     let alloc = st.allocations.values_mut().find(|a| a.client_addr == from);
 
     if let (Some(ch), Some(peer), Some(alloc)) = (channel, peer_addr, alloc) {
-        if ch >= 0x4000 && ch <= 0x7FFF {
+        if (0x4000..=0x7FFF).contains(&ch) {
             alloc.channel_bindings.insert(ch, peer);
             alloc.permissions.push(peer);
         }

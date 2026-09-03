@@ -4,13 +4,10 @@ members = [
     "crates/alldesk-core",
     "crates/alldesk-capture",
     "crates/alldesk-codec",
-    "crates/alldesk-audio",
-    "crates/alldesk-input",
-    "crates/alldesk-clipboard",
+    "crates/alldesk-platform",
     "crates/alldesk-net",
     "crates/alldesk-files",
     "crates/alldesk-recording",
-    "crates/alldesk-whiteboard",
     "crates/alldesk-ffi",
     "server",
 ]
@@ -22,8 +19,6 @@ license = "MIT"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
-prost = "0.13"
-prost-types = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bytes = { version = "1", features = ["serde"] }

@@ -1,5 +1,5 @@
 [package]
-name = "alldesk-input"
+name = "alldesk-platform"
 version.workspace = true
 edition.workspace = true
 
@@ -8,7 +8,13 @@ alldesk-core = { path = "../alldesk-core" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
 cfg-if = { workspace = true }
+cpal = { workspace = true }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [

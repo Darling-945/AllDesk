@@ -671,7 +671,7 @@ async fn handle_signaling_message(
         | SignalingMessage::LookupResponse { .. }
         | SignalingMessage::RelayAssigned { .. }
         | SignalingMessage::PeerList { .. }
-        | SignalingMessage::HeartbeatAck { .. }
+        | SignalingMessage::HeartbeatAck
         | SignalingMessage::Error { .. } => {
             // These message types are server-to-client only
             let _ = tx.send(

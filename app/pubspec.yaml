@@ -3,7 +3,7 @@ description: Cross-platform LAN remote desktop control application
 version: 0.1.0
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.3.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -18,6 +18,9 @@ dependencies:
 
   # UI
   window_manager: ^0.4.0
+
+  # File transfer
+  file_picker: ^8.0.0
   flutter_screenutil: ^5.9.0
   google_fonts: ^6.2.0
 

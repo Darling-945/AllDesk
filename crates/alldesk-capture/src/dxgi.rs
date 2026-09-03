@@ -60,6 +60,12 @@ pub struct DxgiCapturer {
 unsafe impl Send for DxgiCapturer {}
 unsafe impl Sync for DxgiCapturer {}
 
+impl Default for DxgiCapturer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DxgiCapturer {
     pub fn new() -> Self {
         Self {

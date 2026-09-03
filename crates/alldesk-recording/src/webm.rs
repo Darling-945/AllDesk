@@ -81,7 +81,7 @@ fn encode_vint(value: u64) -> Vec<u8> {
             return buf;
         }
     }
-    let encoded = 0x01_00000000_000000 | value;
+    let encoded = 0x0100_0000_0000_0000 | value;
     let nbytes = 8;
     let mut buf = Vec::with_capacity(nbytes);
     for i in 0..nbytes {
@@ -122,7 +122,7 @@ fn write_uint_element(writer: &mut impl Write, id: u32, value: u64) -> std::io::
     let bytes = if value == 0 {
         vec![0u8]
     } else {
-        let len = (64 - value.leading_zeros() + 7) / 8;
+        let len = (64 - value.leading_zeros()).div_ceil(8);
         (0..len).rev().map(|i| (value >> (i * 8)) as u8).collect::<Vec<_>>()
     };
     write_element(writer, id, &bytes)
@@ -283,7 +283,7 @@ impl WebmMuxer {
         self.frames_in_cluster += 1;
 
         // Periodic flush.
-        if self.frame_count % 30 == 0 {
+        if self.frame_count.is_multiple_of(30) {
             self.file.flush()?;
         }
 

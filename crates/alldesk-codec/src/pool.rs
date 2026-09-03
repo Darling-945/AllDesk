@@ -69,8 +69,8 @@ impl BufferPool {
             buf
         } else {
             *self.total_allocated.lock().unwrap() += 1;
-            let buf = Vec::with_capacity(min_capacity.max(self.buffer_size));
-            buf
+            
+            Vec::with_capacity(min_capacity.max(self.buffer_size))
         }
     }
 

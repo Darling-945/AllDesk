@@ -45,25 +45,29 @@ impl ServerConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(v) = std::env::var("ALLDESK_SIGNALING_PORT") {
-            if let Ok(port) = v.parse() {
-                config.signaling_port = port;
-            }
+        if let Some(port) = std::env::var("ALLDESK_SIGNALING_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            config.signaling_port = port;
         }
-        if let Ok(v) = std::env::var("ALLDESK_RELAY_PORT") {
-            if let Ok(port) = v.parse() {
-                config.relay_port = port;
-            }
+        if let Some(port) = std::env::var("ALLDESK_RELAY_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            config.relay_port = port;
         }
-        if let Ok(v) = std::env::var("ALLDESK_STUN_PORT") {
-            if let Ok(port) = v.parse() {
-                config.stun_port = port;
-            }
+        if let Some(port) = std::env::var("ALLDESK_STUN_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            config.stun_port = port;
         }
-        if let Ok(v) = std::env::var("ALLDESK_HEALTH_PORT") {
-            if let Ok(port) = v.parse() {
-                config.health_port = port;
-            }
+        if let Some(port) = std::env::var("ALLDESK_HEALTH_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            config.health_port = port;
         }
         if let Ok(v) = std::env::var("ALLDESK_LOG_LEVEL") {
             config.log_level = v;
@@ -172,8 +176,7 @@ peer_timeout_secs = 120
 
     #[test]
     fn test_config_validate_rejects_zero_port() {
-        let mut config = ServerConfig::default();
-        config.signaling_port = 0;
+        let config = ServerConfig { signaling_port: 0, ..Default::default() };
         assert!(config.validate().is_err());
     }
 

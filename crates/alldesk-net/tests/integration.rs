@@ -323,19 +323,15 @@ async fn test_reconnect_flow() {
     assert!(mgr.can_reconnect().await);
 
     let server1_handle = tokio::spawn(async move {
-        let conn = server1.accept().await.unwrap();
-        QuicTransport::new(conn, true)
+        server1.accept().await.unwrap()
     });
 
-    let mut transport = mgr.connect().await.unwrap();
-    let mut _st1 = server1_handle.await.unwrap();
+    let conn = mgr.connect().await.unwrap();
+    let _st1 = server1_handle.await.unwrap();
     assert_eq!(mgr.state().await, ConnectionState::Connected);
 
     // Phase 2: disconnect.
-    {
-        use alldesk_net::Transport;
-        transport.close().await.unwrap();
-    }
+    conn.close(0u32.into(), b"test");
     mgr.mark_disconnected().await;
     assert_eq!(mgr.state().await, ConnectionState::Disconnected);
 
@@ -352,24 +348,23 @@ async fn test_reconnect_flow() {
         QuicTransport::new(conn, true)
     });
 
-    let mut transport2 = mgr2.connect().await.unwrap();
+    let conn2 = mgr2.connect().await.unwrap();
     let mut st2 = server2_handle.await.unwrap();
     assert_eq!(mgr2.state().await, ConnectionState::Connected);
 
     // Verify data flows on the new connection.
+    let mut transport2 = QuicTransport::new(conn2.clone(), true);
     let recv_task = tokio::spawn(async move {
         let ch = st2.accept_stream().await.unwrap();
         st2.recv(ch).await.unwrap()
     });
 
+    use alldesk_net::Transport;
     transport2.send(Channel::Control, b"reconnected-ok").await.unwrap();
     let data = recv_task.await.unwrap();
     assert_eq!(&data, b"reconnected-ok");
 
-    {
-        use alldesk_net::Transport;
-        transport2.close().await.unwrap();
-    }
+    conn2.close(0u32.into(), b"test");
     mgr2.mark_disconnected().await;
     assert_eq!(mgr2.state().await, ConnectionState::Disconnected);
 

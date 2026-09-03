@@ -59,11 +59,21 @@ pub struct QualityCollector {
     rtt_samples: Vec<f64>,
     total_sent: u64,
     total_lost: u64,
+    /// Previous cumulative counters, for delta computation in
+    /// [`QualityCollector::record_packet_counts`].
+    last_sent_total: u64,
+    last_lost_total: u64,
     frames_received: u64,
     frames_dropped: u64,
     bandwidth_kbps: u64,
     last_update: Instant,
     created: Instant,
+}
+
+impl Default for QualityCollector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl QualityCollector {
@@ -73,6 +83,8 @@ impl QualityCollector {
             rtt_samples: Vec::with_capacity(RTT_WINDOW),
             total_sent: 0,
             total_lost: 0,
+            last_sent_total: 0,
+            last_lost_total: 0,
             frames_received: 0,
             frames_dropped: 0,
             bandwidth_kbps: 0,
@@ -98,6 +110,17 @@ impl QualityCollector {
     /// Increment the count of packets lost.
     pub fn record_packet_lost(&mut self) {
         self.total_lost += 1;
+    }
+
+    /// Record cumulative packet counters (e.g. from transport statistics) as
+    /// deltas; the counters keep growing across sampling intervals.
+    pub fn record_packet_counts(&mut self, sent_total: u64, lost_total: u64) {
+        let sent_delta = sent_total.saturating_sub(self.last_sent_total);
+        let lost_delta = lost_total.saturating_sub(self.last_lost_total);
+        self.total_sent += sent_delta;
+        self.total_lost += lost_delta;
+        self.last_sent_total = sent_total;
+        self.last_lost_total = lost_total;
     }
 
     /// Increment the count of frames received.
@@ -153,6 +176,8 @@ impl QualityCollector {
         self.rtt_samples.clear();
         self.total_sent = 0;
         self.total_lost = 0;
+        self.last_sent_total = 0;
+        self.last_lost_total = 0;
         self.frames_received = 0;
         self.frames_dropped = 0;
         self.bandwidth_kbps = 0;
@@ -174,7 +199,7 @@ fn median(samples: &[f64]) -> f64 {
     let mut sorted: Vec<f64> = samples.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
         sorted[mid]

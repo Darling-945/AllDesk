@@ -18,7 +18,7 @@ use std::sync::Mutex;
 
 use alldesk_core::Result;
 
-use crate::controller::{
+use crate::input::controller::{
     ButtonState, DisplayRect, InputController, KeyCode, KeyState, MouseButton,
     TouchEvent, TouchPoint,
 };
@@ -150,7 +150,7 @@ unsafe impl Sync for AndroidInputController {}
 thread_local! {
     /// Thread-local controller instance used by the JNI bridge functions.
     /// Set by the Flutter side after the AccessibilityService is connected.
-    static JNI_CONTROLLER: RefCell<Option<AndroidInputController>> = RefCell::new(None);
+    static JNI_CONTROLLER: RefCell<Option<AndroidInputController>> = const { RefCell::new(None) };
 }
 
 /// Initialize the JNI bridge with a fresh controller.

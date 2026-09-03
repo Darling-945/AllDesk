@@ -105,33 +105,51 @@ impl Recorder {
 
     /// Set the video dimensions. Must be called before the first `write_frame`.
     pub fn with_dimensions(mut self, width: u32, height: u32) -> Self {
-        self.width = width;
-        self.height = height;
-        let _ = self.file.seek(SeekFrom::Start(OFFSET_WIDTH));
-        let _ = self.file.write_all(&width.to_le_bytes());
-        let _ = self.file.write_all(&height.to_le_bytes());
-        let _ = self.file.seek(SeekFrom::End(0));
+        self.set_dimensions(width, height);
         self
     }
 
     /// Set the frame rate. Must be called before the first `write_frame`.
     pub fn with_fps(mut self, fps: u32) -> Self {
-        self.fps = fps;
-        let _ = self.file.seek(SeekFrom::Start(OFFSET_FPS));
-        let _ = self.file.write_all(&fps.to_le_bytes());
-        let _ = self.file.seek(SeekFrom::End(0));
+        self.set_fps(fps);
         self
     }
 
     /// Enable audio recording with the given sample rate (e.g., 48000).
     /// Must be called before writing any audio frames.
     pub fn with_audio(mut self, sample_rate: u32) -> Self {
+        self.set_audio(sample_rate);
+        self
+    }
+
+    /// Update the video dimensions stored in the file header.
+    /// Non-consuming variant of [`Recorder::with_dimensions`].
+    pub fn set_dimensions(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+        let _ = self.file.seek(SeekFrom::Start(OFFSET_WIDTH));
+        let _ = self.file.write_all(&width.to_le_bytes());
+        let _ = self.file.write_all(&height.to_le_bytes());
+        let _ = self.file.seek(SeekFrom::End(0));
+    }
+
+    /// Update the frame rate stored in the file header.
+    /// Non-consuming variant of [`Recorder::with_fps`].
+    pub fn set_fps(&mut self, fps: u32) {
+        self.fps = fps;
+        let _ = self.file.seek(SeekFrom::Start(OFFSET_FPS));
+        let _ = self.file.write_all(&fps.to_le_bytes());
+        let _ = self.file.seek(SeekFrom::End(0));
+    }
+
+    /// Enable audio in the file header.
+    /// Non-consuming variant of [`Recorder::with_audio`].
+    pub fn set_audio(&mut self, sample_rate: u32) {
         self.audio_sample_rate = sample_rate;
         self.has_audio = true;
         let _ = self.file.seek(SeekFrom::Start(OFFSET_AUDIO_SAMPLE_RATE));
         let _ = self.file.write_all(&sample_rate.to_le_bytes());
         let _ = self.file.seek(SeekFrom::End(0));
-        self
     }
 
     /// Append a single video frame to the recording.
@@ -142,7 +160,7 @@ impl Recorder {
 
         self.frame_count += 1;
 
-        if self.frame_count % 30 == 0 {
+        if self.frame_count.is_multiple_of(30) {
             self.file.flush()?;
         }
 
@@ -158,7 +176,7 @@ impl Recorder {
 
         self.audio_frame_count += 1;
 
-        if self.audio_frame_count % 100 == 0 {
+        if self.audio_frame_count.is_multiple_of(100) {
             self.file.flush()?;
         }
 
@@ -653,7 +671,7 @@ mod tests {
 
         let mut recorder = recorder;
         let frame = vec![0u8; 16]; // 2x2 BGRA
-        let audio = vec![1.0f32; 48].iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
+        let audio = [1.0f32; 48].iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
 
         // Write all video frames first, then audio frames.
         recorder.write_frame(&frame, 0).unwrap();
@@ -698,7 +716,7 @@ mod tests {
         header[18..22].copy_from_slice(&1u32.to_le_bytes()); // 1 frame
 
         let frame_data = vec![99u8; 320 * 240 * 4];
-        let mut ts_bytes = 0u64.to_le_bytes();
+        let ts_bytes = 0u64.to_le_bytes();
         let len_bytes = (frame_data.len() as u32).to_le_bytes();
 
         let mut file_data = Vec::new();

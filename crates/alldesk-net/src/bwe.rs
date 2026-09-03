@@ -146,8 +146,8 @@ impl BandwidthEstimator {
 
         // Normalize slope to [0, 1] range
         // Positive slope = increasing delay = congestion
-        let normalized = (slope / 1000.0 + 0.5).clamp(0.0, 1.0);
-        normalized
+        
+        (slope / 1000.0 + 0.5).clamp(0.0, 1.0)
     }
 
     /// Update the bandwidth estimate based on the current state.

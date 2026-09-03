@@ -148,10 +148,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             title: const Text('Version'),
             subtitle: Text(_version.isEmpty ? 'Loading...' : _version),
           ),
-          ListTile(
-            leading: const Icon(Icons.code),
-            title: const Text('Open Source'),
-            subtitle: const Text('Built with Rust + Flutter'),
+          const ListTile(
+            leading: Icon(Icons.code),
+            title: Text('Open Source'),
+            subtitle: Text('Built with Rust + Flutter'),
           ),
           const SizedBox(height: 24),
           Padding(

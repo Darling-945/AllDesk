@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../src/rust/api.dart' as rust_api;
 import 'touch_gesture_handler.dart';
 
@@ -20,10 +22,13 @@ class _RemotePageState extends ConsumerState<RemotePage> {
   String? _error;
   bool _isFullscreen = false;
   Timer? _frameTimer;
+  Timer? _statusTimer;
   ui.Image? _currentImage;
   int _frameWidth = 0;
   int _frameHeight = 0;
   int _frameCount = 0;
+  String _connectionStatus = '';
+  bool _recording = false;
 
   @override
   void initState() {
@@ -34,6 +39,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
   @override
   void dispose() {
     _frameTimer?.cancel();
+    _statusTimer?.cancel();
     _disconnect();
     _currentImage?.dispose();
     super.dispose();
@@ -45,6 +51,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
       if (mounted) {
         setState(() => _connecting = false);
         _startFramePolling();
+        _startStatusPolling();
       }
     } catch (e) {
       if (mounted) {
@@ -54,6 +61,22 @@ class _RemotePageState extends ConsumerState<RemotePage> {
         });
       }
     }
+  }
+
+  void _startStatusPolling() {
+    _statusTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _pollStatus(),
+    );
+  }
+
+  Future<void> _pollStatus() async {
+    try {
+      final jsonStr = await rust_api.getConnectionQuality();
+      if (mounted && jsonStr.isNotEmpty) {
+        setState(() => _connectionStatus = jsonStr);
+      }
+    } catch (_) {}
   }
 
   void _startFramePolling() {
@@ -194,10 +217,23 @@ class _RemotePageState extends ConsumerState<RemotePage> {
           style: const TextStyle(color: Colors.white),
         ),
         const SizedBox(height: 4),
-        const Text(
-          'Video stream starting...',
-          style: TextStyle(color: Colors.white54),
+        Text(
+          _frameCount > 0
+              ? 'Waiting for video... ($_frameCount frames)'
+              : 'Video stream starting...',
+          style: const TextStyle(color: Colors.white54),
         ),
+        if (_connectionStatus.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            constraints: const BoxConstraints(maxWidth: 300),
+            child: Text(
+              _connectionStatus,
+              style: const TextStyle(color: Colors.white38, fontSize: 10, fontFamily: 'monospace'),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -222,9 +258,17 @@ class _RemotePageState extends ConsumerState<RemotePage> {
               ),
             ),
           IconButton(
+            icon: Icon(
+              _recording ? Icons.stop_circle : Icons.fiber_manual_record,
+              color: _recording ? Colors.red : Colors.white,
+            ),
+            onPressed: _toggleRecording,
+            tooltip: _recording ? '停止录制' : '录制会话',
+          ),
+          IconButton(
             icon: const Icon(Icons.folder, color: Colors.white),
-            onPressed: () {},
-            tooltip: 'File Transfer',
+            onPressed: () => context.go('/files'),
+            tooltip: '文件传输',
           ),
           IconButton(
             icon: const Icon(Icons.call_end, color: Colors.red),
@@ -234,6 +278,32 @@ class _RemotePageState extends ConsumerState<RemotePage> {
         ],
       ),
     );
+  }
+
+  Future<void> _toggleRecording() async {
+    try {
+      if (_recording) {
+        final summary = await rust_api.stopSessionRecording();
+        if (mounted) setState(() => _recording = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('录制完成: $summary')),
+          );
+        }
+      } else {
+        final dir = await getApplicationDocumentsDirectory();
+        final ts = DateTime.now().toIso8601String().replaceAll(':', '-');
+        final path = '${dir.path}${Platform.pathSeparator}alldesk_$ts.aldrec';
+        await rust_api.startSessionRecording(path: path);
+        if (mounted) setState(() => _recording = true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('录制操作失败: $e')),
+        );
+      }
+    }
   }
 
   void _toggleFullscreen() {

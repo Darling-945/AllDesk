@@ -8,8 +8,8 @@ void main() {
       await tester.pumpWidget(const MaterialApp(
         home: FileTransferPage(),
       ));
-      expect(find.text('File Transfer'), findsOneWidget);
-      expect(find.text('File Transfer - TBD'), findsOneWidget);
+      expect(find.text('文件传输'), findsOneWidget);
+      expect(find.text('选择文件并发送'), findsOneWidget);
     });
 
     testWidgets('has AppBar', (tester) async {

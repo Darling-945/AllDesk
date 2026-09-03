@@ -14,52 +14,64 @@ pub struct AudioPlayer {
     stream: Option<Stream>,
     /// Shared sample buffer that the cpal callback reads from.
     buffer: Arc<Mutex<VecDeque<f32>>>,
+    /// Configured input sample rate, used to size the jitter buffer.
+    sample_rate: u32,
 }
 
 unsafe impl Send for AudioPlayer {}
 unsafe impl Sync for AudioPlayer {}
 
 impl AudioPlayer {
-    /// Create a new player. The output stream is opened immediately.
+    /// Create a new player at the default 48 kHz. The output stream is
+    /// opened immediately.
     pub fn new() -> Result<Self> {
+        Self::with_sample_rate(48_000)
+    }
+
+    /// Create a new player running at `sample_rate` Hz f32 mono input
+    /// (the input data's rate, not necessarily the device's native rate —
+    /// cpal resamples via its fallback path or the device is configured).
+    pub fn with_sample_rate(sample_rate: u32) -> Result<Self> {
         let buffer = Arc::new(Mutex::new(VecDeque::<f32>::new()));
 
-        let stream = Self::build_stream(&buffer)?;
+        let stream = Self::build_stream(&buffer, sample_rate)?;
 
         Ok(Self {
             stream: Some(stream),
             buffer,
+            sample_rate,
         })
     }
 
-    /// Build the cpal output stream for 48 kHz f32 playback.
-    fn build_stream(buffer: &Arc<Mutex<VecDeque<f32>>>) -> Result<Stream> {
+    /// Build the cpal output stream for f32 playback at `sample_rate`.
+    fn build_stream(buffer: &Arc<Mutex<VecDeque<f32>>>, sample_rate: u32) -> Result<Stream> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
             .ok_or_else(|| Error::Audio("No default output device available".into()))?;
 
-        // Try to find a supported config matching 48 kHz, f32, >=1 channel.
+        // Try to find a supported config matching the requested rate, f32, >=1 channel.
         let supported = device
             .supported_output_configs()
             .map_err(|e| Error::Audio(format!("Failed to query output configs: {e}")))?;
 
         let use_config = supported
             .filter(|c| c.channels() >= 1)
-            .filter(|c| c.min_sample_rate() <= 48_000 && c.max_sample_rate() >= 48_000)
+            .filter(|c| c.min_sample_rate() <= sample_rate && c.max_sample_rate() >= sample_rate)
             .find(|c| c.sample_format() == SampleFormat::F32)
             .map(|c| {
                 // Keep the device's native channel count; the callback will
                 // duplicate mono samples to fill all channels.
-                c.with_sample_rate(48_000).config()
+                c.with_sample_rate(sample_rate).config()
             })
             .unwrap_or_else(|| {
                 tracing::warn!(
-                    "Could not find exact 48 kHz f32 output config, using fallback"
+                    "Could not find exact {} Hz f32 output config, using fallback",
+                    sample_rate
                 );
                 StreamConfig {
                     channels: 1,
-                    sample_rate: 48_000,
+                    sample_rate,
                     buffer_size: cpal::BufferSize::Default,
                 }
             });
@@ -141,11 +153,11 @@ impl AudioPlayer {
             .lock()
             .map_err(|_| Error::Audio("Playback buffer lock poisoned".into()))?;
 
-        // Limit the buffer to ~0.5 seconds at 48 kHz to prevent unbounded
-        // growth if data arrives faster than it is consumed.
-        const MAX_BUFFER_SAMPLES: usize = 24_000; // 48000 / 2
-        if guard.len() + samples.len() > MAX_BUFFER_SAMPLES {
-            let excess = guard.len() + samples.len() - MAX_BUFFER_SAMPLES;
+        // Limit the buffer to ~0.5 seconds to prevent unbounded growth if
+        // data arrives faster than it is consumed.
+        let max_buffer_samples = (self.sample_rate as usize / 2).max(1);
+        if guard.len() + samples.len() > max_buffer_samples {
+            let excess = guard.len() + samples.len() - max_buffer_samples;
             guard.drain(..excess);
         }
 

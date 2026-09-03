@@ -111,7 +111,7 @@ impl IceAgent {
         // Try to enumerate additional local addresses
         // by connecting a UDP socket to known public IPs
         for target in &["8.8.8.8:80", "1.1.1.1:80"] {
-            if let Ok(_) = socket.connect(target) {
+            if socket.connect(target).is_ok() {
                 if let Ok(addr) = socket.local_addr() {
                     let ip = addr.ip();
                     if seen.insert(ip) {
@@ -356,7 +356,7 @@ mod tests {
         assert!(!candidates.is_empty());
         assert!(candidates.iter().all(|c| c.candidate_type == IceCandidateType::Host));
         // Should have at least one candidate
-        assert!(agent.local_candidates.len() >= 1);
+        assert!(!agent.local_candidates.is_empty());
     }
 
     #[test]

@@ -14,7 +14,6 @@ rustls = { workspace = true }
 rcgen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-prost = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tokio-tungstenite = "0.24"

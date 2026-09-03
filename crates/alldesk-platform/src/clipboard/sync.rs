@@ -1,5 +1,5 @@
 use alldesk_core::{Error, Result};
-use crate::ClipboardContent;
+use crate::clipboard::ClipboardContent;
 
 /// Wire-format tag for the content type.
 const TAG_TEXT: u8 = 0x01;
@@ -117,14 +117,15 @@ impl ClipboardSync {
     /// Receive clipboard data from a remote peer, deserialize it, and
     /// write it to the local system clipboard.
     pub async fn receive_clipboard(
-        &self,
-        monitor: &mut crate::ClipboardMonitor,
+        &mut self,
+        monitor: &mut crate::clipboard::ClipboardMonitor,
         data: &[u8],
     ) -> Result<()> {
         let content = Self::deserialize_content(data)?;
 
         // Record the hash so the caller can suppress a round-trip echo.
         // (The monitor's set_content also updates its internal hash.)
+        self.last_remote_update_hash = content.content_hash();
 
         monitor.set_content(&content)?;
 

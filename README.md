@@ -34,20 +34,16 @@
 
 | 目录 | 说明 |
 |------|------|
-| `crates/alldesk-core` | 共享错误类型、配置、protobuf 定义 |
+| `crates/alldesk-core` | 共享错误类型、配置 |
 | `crates/alldesk-capture` | 屏幕捕获（DXGI / CoreGraphics / X11 / Wayland / MediaProjection） |
+| `crates/alldesk-platform` | 本机外设集成：音频采集/播放 + 剪贴板 + 键鼠注入 |
 | `crates/alldesk-codec` | 视频编解码（VP9 / H.264 / AV1） |
-| `crates/alldesk-audio` | 音频采集 + 播放（cpal + Opus） |
-| `crates/alldesk-input` | 键鼠注入（平台原生 API） |
-| `crates/alldesk-clipboard` | 剪贴板同步（arboard） |
 | `crates/alldesk-net` | 网络层（QUIC P2P + 中继 + STUN + mDNS） |
 | `crates/alldesk-files` | 文件传输（分块、断点续传） |
 | `crates/alldesk-recording` | 录屏（WebM 封装） |
-| `crates/alldesk-whiteboard` | 白板标注（笔画模型 + 同步协议） |
 | `crates/alldesk-ffi` | Flutter FFI 桥接 |
 | `app/` | Flutter 应用 |
 | `server/` | 信令 + 中继服务器 |
-| `proto/` | Protobuf 定义 |
 
 ### 数据流
 

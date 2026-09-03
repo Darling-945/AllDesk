@@ -425,7 +425,7 @@ async fn forward_all_streams(
             result = from.read_datagram() => {
                 let data = result
                     .map_err(|e| anyhow::anyhow!("{} read_datagram: {}", direction, e))?;
-                to.send_datagram(data.into())
+                to.send_datagram(data)
                     .map_err(|e| anyhow::anyhow!("{} send_datagram: {}", direction, e))?;
             }
         }

@@ -16,6 +16,9 @@ pub struct AudioCapturer {
     tx: mpsc::SyncSender<Vec<u8>>,
     /// Receiver half — `recv_chunk` reads from this.
     rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
+    /// Sample rate of the active stream (0 before `start()`). The receiver
+    /// needs this to play chunks at the right speed.
+    sample_rate: u32,
 }
 
 // The cpal `Stream` is `Send` but not `Sync`; we only ever access it from
@@ -31,7 +34,13 @@ impl AudioCapturer {
             stream: None,
             tx,
             rx: Arc::new(Mutex::new(rx)),
+            sample_rate: 0,
         })
+    }
+
+    /// The sample rate of the active capture stream, or 0 if not started.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
     }
 
     /// Open the default input device and start capturing at 48 kHz mono f32.
@@ -85,9 +94,7 @@ impl AudioCapturer {
                 // Last resort: try any supported config with any sample format.
                 tracing::warn!("No f32 config available, trying any supported config");
                 supported
-                    .clone()
-                    .filter(|c| c.channels() >= 1)
-                    .next()
+                    .clone().find(|c| c.channels() >= 1)
                     .map(|c| {
                         let rate = c.min_sample_rate();
                         let mut cfg: StreamConfig = c.with_sample_rate(rate).config();
@@ -130,6 +137,7 @@ impl AudioCapturer {
             .play()
             .map_err(|e| Error::Audio(format!("Failed to start input stream: {e}")))?;
 
+        self.sample_rate = use_config.sample_rate;
         self.stream = Some(stream);
         tracing::info!(
             "Audio capture started: {} Hz, {} ch, f32",
@@ -143,6 +151,7 @@ impl AudioCapturer {
     pub fn stop(&mut self) -> Result<()> {
         if let Some(stream) = self.stream.take() {
             drop(stream);
+            self.sample_rate = 0;
             tracing::info!("Audio capture stopped");
         }
         Ok(())

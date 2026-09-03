@@ -29,7 +29,9 @@ class PlatformService {
     _frameSubscription = null;
     try {
       await _channel.invokeMethod<void>('stopScreenCapture');
-    } on PlatformException {}
+    } on PlatformException {
+      // Service may already be stopped; nothing to recover.
+    }
   }
 
   /// Check if accessibility service is enabled.
@@ -48,7 +50,9 @@ class PlatformService {
     if (!Platform.isAndroid) return;
     try {
       await _channel.invokeMethod<void>('openAccessibilitySettings');
-    } on PlatformException {}
+    } on PlatformException {
+      // Settings page may fail to open on some devices; ignore.
+    }
   }
 
   /// Start listening for frames from Android ScreenCaptureService.

@@ -297,7 +297,6 @@ mod tests {
 
         let e2e = tracker.end_to_end_stats();
         assert_eq!(e2e.sample_count, 1);
-        assert!(e2e.avg_us >= 0);
     }
 
     #[test]

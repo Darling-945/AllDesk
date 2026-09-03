@@ -7,7 +7,6 @@ use tracing::{debug, info, warn};
 use alldesk_core::Result;
 use alldesk_core::error::Error;
 use crate::quic_conn::QuicEndpoint;
-use crate::transport::QuicTransport;
 
 /// Maximum number of reconnection attempts before giving up.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
@@ -83,7 +82,10 @@ impl ReconnectManager {
     }
 
     /// Perform initial connection to the remote peer.
-    pub async fn connect(&self) -> Result<QuicTransport> {
+    ///
+    /// Returns the raw connection; the caller builds its own transports
+    /// (several pipelines usually share one connection).
+    pub async fn connect(&self) -> Result<quinn::Connection> {
         {
             let mut s = self.state.lock().await;
             if *s == ConnectionState::Connected {
@@ -96,7 +98,7 @@ impl ReconnectManager {
             Ok(conn) => {
                 info!("Connected to {}", self.remote_addr);
                 *self.state.lock().await = ConnectionState::Connected;
-                Ok(QuicTransport::new(conn, true))
+                Ok(conn)
             }
             Err(e) => {
                 *self.state.lock().await = ConnectionState::Disconnected;
@@ -107,8 +109,8 @@ impl ReconnectManager {
 
     /// Attempt to reconnect after a connection failure.
     /// Uses exponential backoff between attempts.
-    /// Returns the new transport on success, or the last error on failure.
-    pub async fn reconnect(&self) -> Result<QuicTransport> {
+    /// Returns the new connection on success, or the last error on failure.
+    pub async fn reconnect(&self) -> Result<quinn::Connection> {
         {
             let mut s = self.state.lock().await;
             *s = ConnectionState::Reconnecting;
@@ -125,7 +127,7 @@ impl ReconnectManager {
                 Ok(conn) => {
                     info!("Reconnected to {} on attempt {}", self.remote_addr, attempt);
                     *self.state.lock().await = ConnectionState::Connected;
-                    return Ok(QuicTransport::new(conn, true));
+                    return Ok(conn);
                 }
                 Err(e) => {
                     warn!(
@@ -266,16 +268,14 @@ mod tests {
 
         // Accept on server side
         let server_handle = tokio::spawn(async move {
-            let conn = server.accept().await.unwrap();
-            QuicTransport::new(conn, true)
+            server.accept().await.unwrap()
         });
 
-        let mut transport = mgr.connect().await.unwrap();
-        let mut _server_transport = server_handle.await.unwrap();
+        let conn = mgr.connect().await.unwrap();
+        let _server_conn = server_handle.await.unwrap();
         assert_eq!(mgr.state().await, ConnectionState::Connected);
 
-        use crate::Transport;
-        transport.close().await.unwrap();
+        conn.close(0u32.into(), b"test");
         mgr.mark_disconnected().await;
         assert_eq!(mgr.state().await, ConnectionState::Disconnected);
     }

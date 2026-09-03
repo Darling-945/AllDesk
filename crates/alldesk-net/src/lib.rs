@@ -63,8 +63,8 @@ mod tests {
         // Accept and connect concurrently
         let server_handle = tokio::spawn(async move {
             let conn = server.accept().await.unwrap();
-            let transport = QuicTransport::new(conn, true);
-            transport
+            
+            QuicTransport::new(conn, true)
         });
 
         let client_conn = client.connect(addr).await.unwrap();

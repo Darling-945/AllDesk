@@ -9,6 +9,12 @@ AllDesk — 跨平台局域网远程桌面控制软件。Rust 核心 + Flutter U
 ## Commands
 
 ```bash
+# 构建脚本（统一入口）
+bash build.sh              # Windows release
+bash build.sh android      # Android release APK
+bash build.sh android-debug [device-id]
+# Windows 上等价使用 build.bat
+
 # Rust
 cargo check --workspace          # Check all crates compile
 cargo build --workspace           # Build all crates
@@ -37,21 +43,17 @@ cd app && flutter build apk --release
 
 ### Monorepo Layout
 
-- `crates/` — Rust workspace (11 crates)
-  - `alldesk-core` — 共享错误类型、配置、protobuf 定义
+- `crates/` — Rust workspace (8 crates: core, platform, capture, codec, net, files, recording, ffi)
+  - `alldesk-core` — 共享错误类型、配置
   - `alldesk-capture` — 屏幕捕获（DXGI/CoreGraphics/X11/Wayland/MediaProjection）
+  - `alldesk-platform` — 本机外设集成：音频采集/播放 + 剪贴板 + 键鼠注入
   - `alldesk-codec` — 视频编解码（VP9/H.264/AV1）
-  - `alldesk-audio` — 音频采集+播放（cpal + Opus）
-  - `alldesk-input` — 键鼠注入（平台特定 API）
-  - `alldesk-clipboard` — 剪贴板同步（arboard）
   - `alldesk-net` — 网络层（QUIC P2P + 中继 + STUN + mDNS 发现）
   - `alldesk-files` — 文件传输（分块、断点续传）
   - `alldesk-recording` — 录屏（WebM 封装）
-  - `alldesk-whiteboard` — 白板标注（笔画模型 + 同步协议）
   - `alldesk-ffi` — Flutter FFI 桥接（flutter_rust_bridge v2）
 - `app/` — Flutter 应用（Riverpod 状态管理 + GoRouter 导航）
 - `server/` — 信令 + 中继服务器
-- `proto/` — Protobuf 定义
 
 ### Key Data Flow
 

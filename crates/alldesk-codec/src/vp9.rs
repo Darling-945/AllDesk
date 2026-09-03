@@ -126,7 +126,7 @@ unsafe impl Sync for Vp9Encoder {}
 
 impl Vp9Encoder {
     pub fn new(width: u32, height: u32, bitrate_kbps: u32, fps: u32) -> Result<Self> {
-        if width % 2 != 0 || height % 2 != 0 {
+        if !width.is_multiple_of(2) || !height.is_multiple_of(2) {
             return Err(vpx_err!("width/height must be divisible by 2"));
         }
 

@@ -27,6 +27,10 @@ class TouchGestureHandler extends StatefulWidget {
 class _TouchGestureHandlerState extends State<TouchGestureHandler> {
   Offset _lastPosition = Offset.zero;
 
+  /// Active touch pointers, used to detect the two-finger scroll gesture.
+  final Map<int, Offset> _pointers = {};
+  Offset? _scrollAnchor;
+
   Offset _toRemoteCoords(Offset local, Size widgetSize) {
     final scaleX = widget.remoteResolution.width / widgetSize.width;
     final scaleY = widget.remoteResolution.height / widgetSize.height;
@@ -47,6 +51,41 @@ class _TouchGestureHandlerState extends State<TouchGestureHandler> {
     try {
       await rust_api.sendScroll(dy: deltaY);
     } catch (_) {}
+  }
+
+  Offset _averagePointerPosition() {
+    final sum = _pointers.values.reduce((a, b) => a + b);
+    return sum / _pointers.length.toDouble();
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _pointers[event.pointer] = event.localPosition;
+    if (_pointers.length == 2) {
+      _scrollAnchor = _averagePointerPosition();
+    }
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (!_pointers.containsKey(event.pointer)) return;
+    _pointers[event.pointer] = event.localPosition;
+
+    if (_pointers.length == 2 && _scrollAnchor != null) {
+      final current = _averagePointerPosition();
+      final dy = current.dy - _scrollAnchor!.dy;
+      if (dy != 0) {
+        // Natural scrolling: fingers drag down → content scrolls down.
+        // The remote wheel treats positive values as "up".
+        _sendScroll(-dy);
+      }
+      _scrollAnchor = current;
+    }
+  }
+
+  void _handlePointerEnd(PointerEvent event) {
+    _pointers.remove(event.pointer);
+    if (_pointers.length < 2) {
+      _scrollAnchor = null;
+    }
   }
 
   void _handleTapUp(TapUpDetails details) {
@@ -96,17 +135,31 @@ class _TouchGestureHandlerState extends State<TouchGestureHandler> {
     _sendMouse(pos, action: 'up');
   }
 
+  void _handlePanCancel() {
+    // A second finger landing cancels the pan; release the held button so
+    // the remote side doesn't get stuck with the mouse pressed.
+    final pos = _toRemoteCoords(_lastPosition, context.size!);
+    _sendMouse(pos, action: 'up');
+  }
+
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapUp: _handleTapUp,
-      onDoubleTap: _handleDoubleTap,
-      onLongPressStart: _handleLongPressStart,
-      onPanStart: _handlePanStart,
-      onPanUpdate: _handlePanUpdate,
-      onPanEnd: _handlePanEnd,
-      behavior: HitTestBehavior.opaque,
-      child: widget.child,
+    return Listener(
+      onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
+      onPointerUp: _handlePointerEnd,
+      onPointerCancel: _handlePointerEnd,
+      child: GestureDetector(
+        onTapUp: _handleTapUp,
+        onDoubleTap: _handleDoubleTap,
+        onLongPressStart: _handleLongPressStart,
+        onPanStart: _handlePanStart,
+        onPanUpdate: _handlePanUpdate,
+        onPanEnd: _handlePanEnd,
+        onPanCancel: _handlePanCancel,
+        behavior: HitTestBehavior.opaque,
+        child: widget.child,
+      ),
     );
   }
 }

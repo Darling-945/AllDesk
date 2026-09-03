@@ -103,11 +103,10 @@ const MAGIC_SIGNATURES: &[MagicSignature] = &[
 /// Detect file category from magic bytes (first few bytes of the file).
 pub fn detect_file_type(data: &[u8]) -> (FileCategory, Option<&'static str>) {
     for sig in MAGIC_SIGNATURES {
-        if data.len() >= sig.offset + sig.bytes.len() {
-            if &data[sig.offset..sig.offset + sig.bytes.len()] == sig.bytes {
+        if data.len() >= sig.offset + sig.bytes.len()
+            && &data[sig.offset..sig.offset + sig.bytes.len()] == sig.bytes {
                 return (sig.category, Some(sig.name));
             }
-        }
     }
     (FileCategory::Unknown, None)
 }
@@ -225,11 +224,7 @@ pub fn validate_file_content(data: &[u8], filename: &str) -> Result<ValidationRe
             ("pdf", FileCategory::Document) => false,
             _ => {
                 // Allow Unknown to Unknown, warn on others.
-                if category != FileCategory::Unknown {
-                    true
-                } else {
-                    false
-                }
+                category != FileCategory::Unknown
             }
         };
         if mismatch {

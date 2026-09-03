@@ -7,7 +7,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 
 /// Size of each chunk when reading/writing files.
-const CHUNK_SIZE: usize = 64 * 1024; // 64 KB
+pub const CHUNK_SIZE: usize = 64 * 1024; // 64 KB
 
 /// Fixed-point scaling for progress: we store progress as u64 where
 /// 1_000_000 = 1.0 (i.e., six decimal places of precision).
@@ -137,9 +137,10 @@ impl FileTransfer {
     ///
     /// The `write_fn` callback is invoked for each chunk, allowing the caller
     /// to send chunks over the network without buffering them all.
-    pub async fn send_file<F>(&self, path: &str, mut write_fn: F) -> Result<()>
+    pub async fn send_file<F, Fut>(&self, path: &str, mut write_fn: F) -> Result<()>
     where
-        F: FnMut(&FileChunk) -> Result<()>,
+        F: FnMut(&FileChunk) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
     {
         let file_path = Path::new(path);
 
@@ -184,7 +185,7 @@ impl FileTransfer {
                 checksum: None,
             };
 
-            write_fn(&chunk)?;
+            write_fn(&chunk).await?;
 
             // Update progress.
             self.bytes_transferred.store(bytes_read_total, Ordering::Relaxed);
@@ -213,7 +214,7 @@ impl FileTransfer {
                 data: Vec::new(),
                 is_last: true,
                 checksum: Some(0),
-            })?;
+            }).await?;
             self.progress_fixed.store(frac_to_fixed(1.0), Ordering::Relaxed);
         }
 
@@ -371,7 +372,7 @@ impl TransferManifest {
         let total_chunks = if total_size == 0 {
             1
         } else {
-            (total_size + chunk_size - 1) / chunk_size
+            total_size.div_ceil(chunk_size)
         };
         Self {
             source: source.to_string(),
@@ -418,8 +419,7 @@ impl TransferManifest {
     pub async fn save(&self) -> Result<()> {
         let path = format!("{}.part", self.destination);
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| alldesk_core::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            .map_err(|e| alldesk_core::Error::Io(std::io::Error::other(
                 format!("serialize manifest: {}", e),
             )))?;
         tokio::fs::write(&path, json).await?;
@@ -476,7 +476,7 @@ mod tests {
                 is_last: chunk.is_last,
                 checksum: chunk.checksum,
             });
-            Ok(())
+            std::future::ready(Ok(()))
         }).await.unwrap();
 
         assert!(!chunks.is_empty());
@@ -508,7 +508,7 @@ mod tests {
                 is_last: chunk.is_last,
                 checksum: chunk.checksum,
             });
-            Ok(())
+            std::future::ready(Ok(()))
         }).await.unwrap();
 
         assert_eq!(chunks.len(), 1);
@@ -525,7 +525,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_transfer_missing_source() {
         let ft = FileTransfer::new();
-        let result = ft.send_file("/nonexistent/file.bin", |_| Ok(())).await;
+        let result = ft.send_file("/nonexistent/file.bin", |_| std::future::ready(Ok(()))).await;
         assert!(result.is_err());
     }
 
@@ -548,7 +548,7 @@ mod tests {
                 is_last: chunk.is_last,
                 checksum: chunk.checksum,
             });
-            Ok(())
+            std::future::ready(Ok(()))
         }).await.unwrap();
 
         // Progress should be 1.0 after completion
@@ -685,7 +685,6 @@ mod tests {
 
         let mut m = TransferManifest::new("src.bin", &dest_str, 128 * 1024, 64 * 1024);
         m.mark_chunk(0);
-        m.save();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {

@@ -17,10 +17,6 @@ rcgen = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-prost = { workspace = true }
 socket2 = "0.5"
 ring = "0.17"
 parking_lot = "0.12"
-
-[build-dependencies]
-prost-build = "0.13"
