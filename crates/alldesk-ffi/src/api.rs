@@ -119,6 +119,11 @@ static APP_STATE: OnceLock<RwLock<AppState>> = OnceLock::new();
 // Separate fine-grained locks to avoid contention between frame polling and input sending.
 static FRAME_RX: OnceLock<Mutex<Option<tokio::sync::broadcast::Receiver<VideoFrame>>>> =
     OnceLock::new();
+/// Broadcast sender of decoded video frames for the active viewer session.
+/// Stream subscribers (watch_video_frames) clone it and subscribe their own
+/// receivers; FRAME_RX keeps one receiver for the legacy poll API.
+static FRAME_TX: OnceLock<Mutex<Option<tokio::sync::broadcast::Sender<VideoFrame>>>> =
+    OnceLock::new();
 static INPUT_TRANSPORT: OnceLock<Mutex<Option<alldesk_net::transport::QuicTransport>>> =
     OnceLock::new();
 /// Viewer-side session recorder (set by start_session_recording).
@@ -126,6 +131,10 @@ static RECORDER: OnceLock<Mutex<Option<Arc<std::sync::Mutex<Recorder>>>>> = Once
 
 fn frame_rx_lock() -> &'static Mutex<Option<tokio::sync::broadcast::Receiver<VideoFrame>>> {
     FRAME_RX.get_or_init(|| Mutex::new(None))
+}
+
+fn frame_tx_lock() -> &'static Mutex<Option<tokio::sync::broadcast::Sender<VideoFrame>>> {
+    FRAME_TX.get_or_init(|| Mutex::new(None))
 }
 
 fn input_transport_lock() -> &'static Mutex<Option<alldesk_net::transport::QuicTransport>> {
@@ -539,7 +548,9 @@ async fn install_viewer_session(
     // All pipelines on this connection share one stream table.
     let transport = alldesk_net::transport::QuicTransport::new(conn.clone(), true);
     let shared_streams = transport.shared_streams();
-    let (mut rx_pipeline, frame_rx) = ReceiverPipeline::new(transport, 1920, 1080);
+    let (mut rx_pipeline, frame_tx) = ReceiverPipeline::new(transport, 1920, 1080);
+    // One receiver for the legacy poll API; stream subscribers make their own.
+    let frame_rx = frame_tx.subscribe();
 
     let receiver_task = tokio::spawn(async move {
         if let Err(e) = rx_pipeline.run().await {
@@ -631,7 +642,8 @@ async fn install_viewer_session(
     state.last_pipeline_error = None;
     state.frames_received = 0;
 
-    // Store frame_rx and input_transport in their own fine-grained locks
+    // Store frame channel and input_transport in their own fine-grained locks
+    *frame_tx_lock().lock().await = Some(frame_tx);
     *frame_rx_lock().lock().await = Some(frame_rx);
     *input_transport_lock().lock().await = Some(input_transport);
 }
@@ -828,6 +840,7 @@ pub async fn disconnect() -> String {
         h.abort();
     }
 
+    *frame_tx_lock().lock().await = None;
     *frame_rx_lock().lock().await = None;
     *input_transport_lock().lock().await = None;
 
@@ -1139,6 +1152,87 @@ pub async fn poll_video_frame() -> Option<Vec<u8>> {
     out.extend_from_slice(&frame.height.to_le_bytes());
     out.extend_from_slice(&frame.bgra_data);
     Some(out)
+}
+
+/// One decoded video frame pushed to Flutter (viewer side).
+pub struct VideoFrameMsg {
+    pub width: u32,
+    pub height: u32,
+    pub bgra: Vec<u8>,
+}
+
+/// Subscribe to a push stream of decoded video frames (viewer side).
+///
+/// Preferred over [`poll_video_frame`]: frames are pushed the moment they
+/// are decoded (no poll-interval latency) and stale queued frames are
+/// coalesced away. The stream survives reconnects — when a session ends it
+/// waits for the next session's frame channel instead of completing.
+pub async fn watch_video_frames(
+    sink: crate::frb_generated::StreamSink<VideoFrameMsg>,
+) -> Result<(), String> {
+    loop {
+        // Wait for the active session's frame channel. (A cancelled Dart
+        // subscription can only be detected via a failed `add`, so this
+        // parked task lives at most until the next session attempt.)
+        let tx = loop {
+            let tx = frame_tx_lock().lock().await.clone();
+            if let Some(tx) = tx {
+                break tx;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+        let mut rx = tx.subscribe();
+        // Drop our sender clone: the global FRAME_TX must remain the
+        // channel's last sender, so this receiver sees `Closed` the moment
+        // a reconnect swaps in a new session channel. Holding the clone
+        // would park this stream on a dead channel forever.
+        drop(tx);
+
+        // Forward until the channel closes (session ended / reconnecting)
+        // or the Dart side cancels the subscription.
+        loop {
+            match rx.recv().await {
+                Ok(frame) => {
+                    let mut latest = frame;
+                    // Coalesce: skip everything already queued behind it —
+                    // real-time video always wants the newest frame.
+                    let mut skipped = 0u64;
+                    while let Ok(next) = rx.try_recv() {
+                        latest = next;
+                        skipped += 1;
+                    }
+                    if skipped > 0 {
+                        if let Ok(state) = app_state().try_write() {
+                            if let Ok(mut q) = state.quality.lock() {
+                                for _ in 0..skipped {
+                                    q.record_frame_dropped();
+                                }
+                            }
+                        }
+                    }
+                    if let Ok(mut state) = app_state().try_write() {
+                        state.video_active = true;
+                        state.frames_received += 1;
+                        if let Ok(mut q) = state.quality.lock() {
+                            q.record_frame_received();
+                        }
+                    }
+                    let msg = VideoFrameMsg {
+                        width: latest.width,
+                        height: latest.height,
+                        bgra: latest.bgra_data,
+                    };
+                    if sink.add(msg).is_err() {
+                        return Ok(()); // stream cancelled from the Dart side
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+        // Loop back around: wait for the next session's frame channel
+        // (reconnect) unless the subscriber is gone.
+    }
 }
 
 /// Send a mouse event to the remote peer (viewer side).
@@ -1611,6 +1705,7 @@ pub async fn stop_stream() -> String {
     if let Some(h) = state.quality_task.take() {
         h.abort();
     }
+    *frame_tx_lock().lock().await = None;
     *frame_rx_lock().lock().await = None;
     *input_transport_lock().lock().await = None;
 

@@ -2,6 +2,17 @@ use alldesk_core::{Error, Result};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+#[cfg(target_os = "windows")]
+use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
+
+/// Current Windows clipboard sequence number — bumped by the OS on every
+/// clipboard change. Reading it needs no clipboard access, making it a
+/// ~free change check compared to copying (and hashing) the full content.
+#[cfg(target_os = "windows")]
+fn clipboard_sequence() -> u32 {
+    unsafe { GetClipboardSequenceNumber() }
+}
+
 /// Clipboard content types supported for sync between peers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClipboardContent {
@@ -40,12 +51,17 @@ impl ClipboardContent {
 
 /// Monitors the system clipboard for content changes.
 ///
-/// Polls the clipboard via arboard and detects changes by hashing the
-/// current content and comparing against the previously seen hash.
+/// On Windows, changes are detected via the OS clipboard sequence number
+/// (cheap, no clipboard access); the content is only read and hashed when
+/// the number actually moved. Elsewhere the clipboard is polled via arboard
+/// and changes are detected by hashing the full content.
 pub struct ClipboardMonitor {
     clipboard: arboard::Clipboard,
     last_hash: u64,
     last_content: Option<ClipboardContent>,
+    /// Sequence number at the last observed change (Windows fast path).
+    #[cfg(target_os = "windows")]
+    last_seq: u32,
 }
 
 impl ClipboardMonitor {
@@ -61,10 +77,18 @@ impl ClipboardMonitor {
             clipboard,
             last_hash: 0,
             last_content: None,
+            #[cfg(target_os = "windows")]
+            last_seq: 0,
         };
 
         // Snapshot the current clipboard so we don't fire a false-positive
-        // change on the first `has_changed()` call.
+        // change on the first `has_changed()` call. The sequence number is
+        // taken first: a change landing between the two reads is then seen
+        // as "already known" (its content is what we snapshotted).
+        #[cfg(target_os = "windows")]
+        {
+            monitor.last_seq = clipboard_sequence();
+        }
         if let Ok(content) = monitor.read_clipboard() {
             monitor.last_hash = content.content_hash();
             monitor.last_content = Some(content);
@@ -74,6 +98,38 @@ impl ClipboardMonitor {
     }
 
     /// Returns `true` if the clipboard content has changed since the last call.
+    ///
+    /// Windows fast path: the OS sequence number is checked first — the
+    /// clipboard content is only read (and hashed) when it actually moved.
+    /// This avoids re-copying potentially huge image payloads every poll.
+    #[cfg(target_os = "windows")]
+    pub fn has_changed(&mut self) -> bool {
+        let seq = clipboard_sequence();
+        if seq == self.last_seq {
+            return false;
+        }
+        self.last_seq = seq;
+        match self.read_clipboard() {
+            Ok(content) => {
+                let hash = content.content_hash();
+                if hash != self.last_hash {
+                    self.last_hash = hash;
+                    self.last_content = Some(content);
+                    true
+                } else {
+                    // Sequence moved but content hashes equal (e.g. an app
+                    // re-copied the same data) — not a change.
+                    false
+                }
+            }
+            // Clipboard might be empty or hold an unsupported format;
+            // treat this as "no change" rather than an error.
+            Err(_) => false,
+        }
+    }
+
+    /// Returns `true` if the clipboard content has changed since the last call.
+    #[cfg(not(target_os = "windows"))]
     pub fn has_changed(&mut self) -> bool {
         match self.read_clipboard() {
             Ok(content) => {
@@ -100,6 +156,12 @@ impl ClipboardMonitor {
             Ok(content) => {
                 self.last_hash = content.content_hash();
                 self.last_content = Some(content.clone());
+                // We now know the current content — fold any pending
+                // sequence bump into "seen" so has_changed() stays quiet.
+                #[cfg(target_os = "windows")]
+                {
+                    self.last_seq = clipboard_sequence();
+                }
                 Ok(Some(content))
             }
             Err(Error::Clipboard(_)) => Ok(None),
@@ -130,9 +192,14 @@ impl ClipboardMonitor {
                     .map_err(|e| Error::Clipboard(format!("Failed to set image: {e}")))?;
             }
         }
-        // Update cached state so has_changed() won't immediately fire.
+        // Update cached state so has_changed() won't immediately fire. Our
+        // own write bumps the OS sequence number — absorb it here too.
         self.last_hash = content.content_hash();
         self.last_content = Some(content.clone());
+        #[cfg(target_os = "windows")]
+        {
+            self.last_seq = clipboard_sequence();
+        }
         Ok(())
     }
 
@@ -185,5 +252,16 @@ mod tests {
             pixels: vec![255, 0, 0, 255, 0, 255, 0, 255],
         };
         assert_eq!(a.content_hash(), b.content_hash());
+    }
+
+    /// The Windows fast path hinges on the sequence number being stable
+    /// while the clipboard is untouched (it needs no clipboard access, so
+    /// this runs fine in any environment, including headless CI).
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn clipboard_sequence_stable_when_idle() {
+        let a = clipboard_sequence();
+        let b = clipboard_sequence();
+        assert_eq!(a, b);
     }
 }

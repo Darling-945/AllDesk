@@ -21,7 +21,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
   bool _connecting = true;
   String? _error;
   bool _isFullscreen = false;
-  Timer? _frameTimer;
+  StreamSubscription<rust_api.VideoFrameMsg>? _frameSub;
   Timer? _statusTimer;
   ui.Image? _currentImage;
   int _frameWidth = 0;
@@ -38,7 +38,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
 
   @override
   void dispose() {
-    _frameTimer?.cancel();
+    _frameSub?.cancel();
     _statusTimer?.cancel();
     _disconnect();
     _currentImage?.dispose();
@@ -50,7 +50,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
       await rust_api.connectToPeer(addr: widget.peerId);
       if (mounted) {
         setState(() => _connecting = false);
-        _startFramePolling();
+        _startFrameStream();
         _startStatusPolling();
       }
     } catch (e) {
@@ -79,39 +79,27 @@ class _RemotePageState extends ConsumerState<RemotePage> {
     } catch (_) {}
   }
 
-  void _startFramePolling() {
-    _frameTimer = Timer.periodic(
-      const Duration(milliseconds: 33),
-      (_) => _pollFrame(),
-    );
+  /// Frames are pushed from Rust the moment they are decoded — no poll
+  /// interval latency. The Rust-side stream survives reconnects on its own.
+  void _startFrameStream() {
+    _frameSub?.cancel();
+    _frameSub = rust_api.watchVideoFrames().listen(
+          (msg) => _onFrame(msg.width, msg.height, msg.bgra),
+          onError: (_) {},
+        );
   }
 
-  Future<void> _pollFrame() async {
-    try {
-      final frameData = await rust_api.pollVideoFrame();
-      if (frameData != null && frameData.length > 8 && mounted) {
-        // First 4 bytes = width (u32 LE), next 4 = height (u32 LE).
-        // sublistView/ByteData.view are zero-copy — a full-frame sublist()
-        // here would memcopy several MB per frame.
-        final header = ByteData.sublistView(frameData, 0, 8);
-        final width = header.getUint32(0, Endian.little);
-        final height = header.getUint32(4, Endian.little);
-
-        if (width > 0 && height > 0) {
-          final bgraData = Uint8List.sublistView(frameData, 8);
-          final image = await _bgraToImage(bgraData, width, height);
-          if (image != null && mounted) {
-            setState(() {
-              _currentImage?.dispose();
-              _currentImage = image;
-              _frameWidth = width;
-              _frameHeight = height;
-              _frameCount++;
-            });
-          }
-        }
-      }
-    } catch (_) {}
+  Future<void> _onFrame(int width, int height, Uint8List bgra) async {
+    final image = await _bgraToImage(bgra, width, height);
+    if (image != null && mounted) {
+      setState(() {
+        _currentImage?.dispose();
+        _currentImage = image;
+        _frameWidth = width;
+        _frameHeight = height;
+        _frameCount++;
+      });
+    }
   }
 
   Future<ui.Image?> _bgraToImage(Uint8List bgra, int width, int height) async {

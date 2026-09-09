@@ -81,7 +81,14 @@
 
 ---
 
-## 本次优化完成项 (Phase 28+27+22+19+16+14+15+17+18+23+11+24+25+26)
+## 本次优化完成项 (Phase 29+28+27+22+19+16+14+15+17+18+23+11+24+25+26)
+
+### Phase 29: 次要项清理 ✅
+- [x] **帧推送事件驱动** — `watch_video_frames` FRB Stream 替代 33ms 轮询:帧解码完成即推送(消除平均 ~16ms 显示延迟与空轮询),Rust 侧合并旧帧只发最新;流在重连后自动切换到新会话通道(subscribe 后丢弃本地 sender 克隆,旧通道关闭即重新等待)
+- [x] **桌面悬停鼠标** — 无按键的鼠标移动直接转发为远程 move(此前 GestureDetector 只在按住拖动时发 move,桌面观看时远程光标不跟手)
+- [x] **双指滚动节流** — 合并为每帧(16ms)最多一条消息;锚点仅在实际发送时推进,被节流的增量累积而非丢失
+- [x] **剪贴板 Windows 快路径** — `GetClipboardSequenceNumber` 序列号检测变化,内容(尤其是大图像)仅在真正变化时读取,不再 250ms 全量拉取+哈希;`set_content`/`get_content` 同步吸收自身写入的序列号变化;非 Windows 保持原哈希轮询
+- [x] **编解码缓冲复用** — Vp9Encoder/Vp9Decoder 持有可复用的 I420 scratch 缓冲(`bgra_to_i420_into`),1080p 下每帧 ~3MB 的堆分配降为一次性,分配器churn 显著降低
 
 ### Phase 28: 性能/卡顿修复 ✅
 - [x] **双重限频帧率减半修复** — 删除 DXGI 捕获器内部限频（与发送管线节拍独立漂移，实际输出约一半帧率）；管线 sleep_until 节拍成为唯一限频器
@@ -307,12 +314,12 @@
   - alldesk-core: 18 tests ✅ (config + adaptive 控制器 / 丢包率跟踪器)
   - alldesk-net: 73 + 7 integration tests ✅ (Channel, QUIC, discovery, reconnect, ICE, flow, BWE, TLS pin, E2E crypto, latency)
   - alldesk-files: 45 tests ✅ (含CRC32校验 + manifest + 文件验证)
-  - alldesk-platform: 55 tests ✅ (audio/clipboard/input 合并后)
+  - alldesk-platform: 57 tests ✅ (audio/clipboard/input 合并后，含序列号稳定性测试)
   - alldesk-recording: 17 tests ✅ (write/read roundtrip, empty/large/error cases)
   - alldesk-capture: 6 tests ✅ (config, pixel format, cursor)
   - server: 52 tests ✅ (registry, signaling, STUN IPv6, config, auth, metrics, bandwidth, TURN)
   - alldesk-codec: 10 tests（编译通过；本机缺 vpx.lib 无法链接测试二进制，CI 可跑）
-  - **Total: 273 tests, all passing locally**
+  - **Total: 275 tests, all passing locally**
 - [x] **Flutter 测试** — 44个测试覆盖主题/设置Provider/发现Provider/文件传输页面/路由
 - [ ] **集成测试** — QUIC集成测试已有(7个)，缺文件传输端到端测试
 - [ ] **性能基准** — 无编解码/网络/捕获性能 benchmark

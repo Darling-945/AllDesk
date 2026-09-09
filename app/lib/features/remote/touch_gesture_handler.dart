@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'dart:ui' show PointerDeviceKind;
 import '../../src/rust/api.dart' as rust_api;
 
 /// Handles touch-to-mouse gesture mapping for mobile remote control.
@@ -9,7 +10,10 @@ import '../../src/rust/api.dart' as rust_api;
 /// - Double tap → double click
 /// - Long press → right click
 /// - One finger drag → mouse move (with left button held)
-/// - Two finger drag → scroll
+/// - Two finger drag → scroll (throttled to one event per frame)
+///
+/// On desktop, plain mouse moves without a button held are forwarded as
+/// hover moves so the remote cursor tracks the local one.
 class TouchGestureHandler extends StatefulWidget {
   final Widget child;
   final Size remoteResolution;
@@ -30,6 +34,11 @@ class _TouchGestureHandlerState extends State<TouchGestureHandler> {
   /// Active touch pointers, used to detect the two-finger scroll gesture.
   final Map<int, Offset> _pointers = {};
   Offset? _scrollAnchor;
+
+  /// When the last scroll event was sent. Scroll deltas are coalesced to at
+  /// most one message per frame (~16 ms) instead of one per pointer event —
+  /// high-Hz digitizers fire hundreds of those per second with two fingers.
+  DateTime _lastScrollSend = DateTime.fromMillisecondsSinceEpoch(0);
 
   Offset _toRemoteCoords(Offset local, Size widgetSize) {
     final scaleX = widget.remoteResolution.width / widgetSize.width;
@@ -66,18 +75,33 @@ class _TouchGestureHandlerState extends State<TouchGestureHandler> {
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
+    // Desktop hover: a mouse moving without any button held never triggers
+    // the GestureDetector pan callbacks below, so forward it here to keep
+    // the remote cursor tracking the local one.
+    if (event.kind == PointerDeviceKind.mouse && !event.down) {
+      final size = context.size;
+      if (size != null) {
+        _sendMouse(_toRemoteCoords(event.localPosition, size), action: 'move');
+      }
+      return;
+    }
+
     if (!_pointers.containsKey(event.pointer)) return;
     _pointers[event.pointer] = event.localPosition;
 
     if (_pointers.length == 2 && _scrollAnchor != null) {
       final current = _averagePointerPosition();
       final dy = current.dy - _scrollAnchor!.dy;
-      if (dy != 0) {
-        // Natural scrolling: fingers drag down → content scrolls down.
-        // The remote wheel treats positive values as "up".
+      final now = DateTime.now();
+      // Natural scrolling: fingers drag down → content scrolls down.
+      // The remote wheel treats positive values as "up". The anchor only
+      // advances when we actually send, so throttled deltas accumulate
+      // instead of being lost.
+      if (dy != 0 && now.difference(_lastScrollSend).inMilliseconds >= 16) {
+        _lastScrollSend = now;
         _sendScroll(-dy);
+        _scrollAnchor = current;
       }
-      _scrollAnchor = current;
     }
   }
 

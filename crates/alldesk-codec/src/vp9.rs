@@ -46,14 +46,24 @@ macro_rules! vpx_ptr {
 // conversions for NV12; these limited-range versions are the ones libvpx's
 // I420 input expects — don't merge them.
 
+#[cfg(test)]
 fn bgra_to_i420(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    bgra_to_i420_into(bgra, width, height, &mut out);
+    out
+}
+
+/// [`bgra_to_i420`] into a caller-owned scratch buffer, reused frame to
+/// frame by the encoder so the ~3 MB I420 plane isn't re-allocated 30x/s.
+fn bgra_to_i420_into(bgra: &[u8], width: u32, height: u32, out: &mut Vec<u8>) {
     let w = width as usize;
     let h = height as usize;
     let y_size = w * h;
     let uv_stride = w / 2;
     let uv_size = uv_stride * (h / 2);
 
-    let mut out = vec![0u8; y_size + 2 * uv_size];
+    out.clear();
+    out.resize(y_size + 2 * uv_size, 0);
     let (y_plane, rest) = out.split_at_mut(y_size);
     let (u_plane, v_plane) = rest.split_at_mut(uv_size);
 
@@ -88,8 +98,6 @@ fn bgra_to_i420(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
             }
         }
     }
-
-    out
 }
 
 fn i420_to_bgra(i420: &[u8], width: u32, height: u32) -> Vec<u8> {
@@ -145,6 +153,9 @@ pub struct Vp9Encoder {
     bitrate_kbps: u32,
     fps: u32,
     force_keyframe: bool,
+    /// Reused I420 conversion buffer — one ~3 MB allocation for the
+    /// encoder's lifetime instead of one per encoded frame.
+    i420_scratch: Vec<u8>,
 }
 
 // SAFETY: libvpx context is self-contained; all access is through &mut self.
@@ -216,6 +227,7 @@ impl Vp9Encoder {
             bitrate_kbps,
             fps,
             force_keyframe: false,
+            i420_scratch: Vec::new(),
         })
     }
 
@@ -246,14 +258,16 @@ impl VideoEncoder for Vp9Encoder {
             }
         };
 
-        let i420 = match frame.format {
-            PixelFormat::Bgra8888 => bgra_to_i420(raw, frame.width, frame.height),
+        match frame.format {
+            PixelFormat::Bgra8888 => {
+                bgra_to_i420_into(raw, frame.width, frame.height, &mut self.i420_scratch)
+            }
             PixelFormat::Rgba8888 => {
                 let mut bgra = raw.clone();
                 for px in bgra.chunks_exact_mut(4) {
                     px.swap(0, 2);
                 }
-                bgra_to_i420(&bgra, frame.width, frame.height)
+                bgra_to_i420_into(&bgra, frame.width, frame.height, &mut self.i420_scratch)
             }
             PixelFormat::Nv12 => {
                 return Err(vpx_err!("NV12 not yet supported"));
@@ -267,7 +281,7 @@ impl VideoEncoder for Vp9Encoder {
             self.width as _,
             self.height as _,
             1,
-            i420.as_ptr() as _,
+            self.i420_scratch.as_ptr() as _,
         ));
 
         let flags: c_long = if self.force_keyframe {
@@ -347,6 +361,8 @@ pub struct Vp9Decoder {
     ctx: vpx_codec_ctx_t,
     width: u32,
     height: u32,
+    /// Reused I420 extraction buffer (see Vp9Encoder::i420_scratch).
+    i420_scratch: Vec<u8>,
 }
 
 unsafe impl Send for Vp9Decoder {}
@@ -365,7 +381,12 @@ impl Vp9Decoder {
             VPX_DECODER_ABI_VERSION as i32,
         ));
 
-        Ok(Self { ctx, width, height })
+        Ok(Self {
+            ctx,
+            width,
+            height,
+            i420_scratch: Vec::new(),
+        })
     }
 }
 
@@ -392,7 +413,9 @@ impl VideoDecoder for Vp9Decoder {
 
             let y_size = (w * h) as usize;
             let uv_size = ((w / 2) * (h / 2)) as usize;
-            let mut i420 = vec![0u8; y_size + 2 * uv_size];
+            self.i420_scratch.clear();
+            self.i420_scratch.resize(y_size + 2 * uv_size, 0);
+            let i420 = &mut self.i420_scratch;
 
             for row in 0..h as usize {
                 let src = img.planes[0].add(row * img.stride[0] as usize);
@@ -412,7 +435,7 @@ impl VideoDecoder for Vp9Decoder {
                     .copy_from_slice(slice::from_raw_parts(src, (w / 2) as usize));
             }
 
-            let bgra = i420_to_bgra(&i420, w, h);
+            let bgra = i420_to_bgra(i420, w, h);
             self.width = w;
             self.height = h;
 

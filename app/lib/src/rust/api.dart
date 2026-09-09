@@ -6,7 +6,7 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `app_state`, `current_recorder`, `decode_special_key`, `ensure_peer_id`, `frame_rx_lock`, `handle_key_event`, `handle_mouse_event`, `handle_scroll_event`, `input_transport_lock`, `install_viewer_session`, `local_ip_addresses`, `received_files_dir`, `record_pipeline_error`, `recorder_lock`, `run_file_receiver`, `run_input_handler`, `run_quality_sampler`, `sanitize_remote_filename`, `send_file_session`, `start_server_internal`, `supervise_connection`
+// These functions are ignored because they are not marked as `pub`: `app_state`, `current_recorder`, `decode_special_key`, `ensure_peer_id`, `frame_rx_lock`, `frame_tx_lock`, `handle_key_event`, `handle_mouse_event`, `handle_scroll_event`, `input_transport_lock`, `install_viewer_session`, `local_ip_addresses`, `received_files_dir`, `record_pipeline_error`, `recorder_lock`, `run_adaptive_controller`, `run_file_receiver`, `run_input_handler`, `run_quality_sampler`, `sanitize_remote_filename`, `send_file_session`, `start_server_internal`, `supervise_connection`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AppState`, `CachedPeer`, `ClientState`, `ServerState`, `SessionState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -53,10 +53,21 @@ Future<String> startScreenStream(
     RustLib.instance.api
         .crateApiStartScreenStream(bitrateKbps: bitrateKbps, fps: fps);
 
-/// Poll for the next available video frame (viewer side).
+/// Poll for the newest available video frame (viewer side).
+/// Drains any queued frames and returns only the latest one — real-time
+/// video should skip stale frames after a UI stall, not replay the backlog.
 /// Returns [width_u32_le, height_u32_le, ...bgra_data] or None.
 Future<Uint8List?> pollVideoFrame() =>
     RustLib.instance.api.crateApiPollVideoFrame();
+
+/// Subscribe to a push stream of decoded video frames (viewer side).
+///
+/// Preferred over [`poll_video_frame`]: frames are pushed the moment they
+/// are decoded (no poll-interval latency) and stale queued frames are
+/// coalesced away. The stream survives reconnects — when a session ends it
+/// waits for the next session's frame channel instead of completing.
+Stream<VideoFrameMsg> watchVideoFrames() =>
+    RustLib.instance.api.crateApiWatchVideoFrames();
 
 /// Send a mouse event to the remote peer (viewer side).
 Future<void> sendMouseEvent(
@@ -181,4 +192,29 @@ class PeerInfo {
           peerId == other.peerId &&
           peerName == other.peerName &&
           address == other.address;
+}
+
+/// One decoded video frame pushed to Flutter (viewer side).
+class VideoFrameMsg {
+  final int width;
+  final int height;
+  final Uint8List bgra;
+
+  const VideoFrameMsg({
+    required this.width,
+    required this.height,
+    required this.bgra,
+  });
+
+  @override
+  int get hashCode => width.hashCode ^ height.hashCode ^ bgra.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VideoFrameMsg &&
+          runtimeType == other.runtimeType &&
+          width == other.width &&
+          height == other.height &&
+          bgra == other.bgra;
 }

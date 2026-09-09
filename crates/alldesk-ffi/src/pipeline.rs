@@ -294,19 +294,24 @@ pub struct ReceiverPipeline {
 }
 
 impl ReceiverPipeline {
+    /// Returns the pipeline plus the broadcast sender for decoded frames.
+    /// Consumers subscribe their own receivers from the sender (`subscribe()`),
+    /// so any number of frame listeners (poll-based or stream-based) can
+    /// coexist on one session.
     pub fn new(
         transport: QuicTransport,
         _width: u32,
         _height: u32,
-    ) -> (Self, broadcast::Receiver<VideoFrame>) {
-        let (tx, rx) = broadcast::channel(8);
+    ) -> (Self, broadcast::Sender<VideoFrame>) {
+        let (tx, _rx) = broadcast::channel(8);
         let this = Self {
             transport,
             frame_tx: tx,
             decoder: None,
             recorder: None,
         };
-        (this, rx)
+        let sender = this.frame_tx.clone();
+        (this, sender)
     }
 
     /// Append an encoded frame to the session recorder, if one is active.
