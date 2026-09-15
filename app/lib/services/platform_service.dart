@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../src/rust/api.dart' as rust_api;
 
 /// Platform channel bridge for Android-specific functionality.
@@ -20,6 +21,27 @@ class PlatformService {
     } on PlatformException {
       return false;
     }
+  }
+
+  /// Whether the screen capture service is currently running (used as the
+  /// "granted" signal for the permission guide — MediaProjection grants are
+  /// per-session, so there is no persistent flag to query).
+  static Future<bool> isScreenCaptureGranted() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final result = await _channel.invokeMethod<bool>('isScreenCaptureGranted');
+      return result ?? false;
+    } on PlatformException {
+      // Older host implementations without this method: report not granted.
+      return false;
+    }
+  }
+
+  /// Request microphone permission (optional; for audio sharing).
+  static Future<bool> requestMicrophonePermission() async {
+    if (!Platform.isAndroid) return true;
+    final status = await Permission.microphone.request();
+    return status.isGranted;
   }
 
   /// Stop screen capture service.

@@ -401,6 +401,16 @@ impl RecordingReader {
 
     /// Iterate over all video frames.
     pub fn frames(&self) -> RecordingFrameIter<'_> {
+        let (offset, end) = self.frames_region();
+        RecordingFrameIter {
+            data: &self.data,
+            offset,
+            end,
+        }
+    }
+
+    /// Byte range [start, end) of the video-frame region.
+    fn frames_region(&self) -> (usize, usize) {
         let start = if self.is_v2 {
             HEADER_V2_SIZE
         } else {
@@ -411,11 +421,7 @@ impl RecordingReader {
         } else {
             self.data.len()
         };
-        RecordingFrameIter {
-            data: &self.data,
-            offset: start,
-            end,
-        }
+        (start, end)
     }
 
     /// Iterate over all audio frames.
@@ -509,6 +515,82 @@ impl<'a> Iterator for AudioFrameIter<'a> {
             timestamp_ms,
             samples,
         })
+    }
+}
+
+/// Stateful sequential player over a recording's video frames.
+///
+/// Unlike [`RecordingReader::frames`] (which borrows the reader and always
+/// restarts from the beginning), the player owns its cursor, so consumers
+/// like the FFI playback layer can pull one frame at a time and rewind.
+pub struct RecordingPlayer {
+    reader: RecordingReader,
+    start: usize,
+    offset: usize,
+    end: usize,
+}
+
+impl RecordingPlayer {
+    /// Open a recording and position the cursor on the first frame.
+    pub fn open(path: &str) -> Result<Self> {
+        let reader = RecordingReader::open(path)?;
+        let (start, end) = reader.frames_region();
+        Ok(Self {
+            reader,
+            start,
+            offset: start,
+            end,
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.reader.width()
+    }
+
+    pub fn height(&self) -> u32 {
+        self.reader.height()
+    }
+
+    pub fn fps(&self) -> u32 {
+        self.reader.fps()
+    }
+
+    pub fn frame_count(&self) -> u32 {
+        self.reader.frame_count()
+    }
+
+    /// Approximate duration derived from header fps and frame count.
+    pub fn duration_ms(&self) -> u64 {
+        let fps = self.reader.fps().max(1) as u64;
+        self.reader.frame_count() as u64 * 1000 / fps
+    }
+
+    /// Rewind to the first frame.
+    pub fn rewind(&mut self) {
+        self.offset = self.start;
+    }
+
+    /// Read the next frame, advancing the cursor.
+    /// Returns `(timestamp_ms, frame_data)` or `None` at the end.
+    pub fn next_frame(&mut self) -> Option<(u64, Vec<u8>)> {
+        if self.offset + 12 > self.end {
+            return None;
+        }
+
+        let data = &self.reader.data;
+        let timestamp_ms = u64::from_le_bytes(data[self.offset..self.offset + 8].try_into().ok()?);
+        let data_len =
+            u32::from_le_bytes(data[self.offset + 8..self.offset + 12].try_into().ok()?) as usize;
+
+        let frame_start = self.offset + 12;
+        let frame_end = frame_start + data_len;
+        if frame_end > self.end {
+            return None;
+        }
+
+        let frame = data[frame_start..frame_end].to_vec();
+        self.offset = frame_end;
+        Some((timestamp_ms, frame))
     }
 }
 
@@ -807,6 +889,73 @@ mod tests {
         let frames: Vec<_> = reader.frames().collect();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].1.len(), 320 * 240 * 4);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_player_sequential_read_and_rewind() {
+        let path = temp_recording_path("player_seq.aldrec");
+
+        let mut recorder = Recorder::new(&path)
+            .unwrap()
+            .with_dimensions(8, 8)
+            .with_fps(10);
+        for i in 0..5u64 {
+            recorder.write_frame(&[i as u8; 16], i * 100).unwrap();
+        }
+        recorder.finish().unwrap();
+
+        let mut player = RecordingPlayer::open(&path).unwrap();
+        assert_eq!((player.width(), player.height()), (8, 8));
+        assert_eq!(player.fps(), 10);
+        assert_eq!(player.frame_count(), 5);
+        assert_eq!(player.duration_ms(), 500);
+
+        // Sequential read: timestamps and payloads in order, then EOF.
+        for i in 0..5u64 {
+            let (ts, data) = player.next_frame().unwrap();
+            assert_eq!(ts, i * 100);
+            assert_eq!(data, vec![i as u8; 16]);
+        }
+        assert!(player.next_frame().is_none());
+        assert!(player.next_frame().is_none());
+
+        // Rewind replays everything from the start.
+        player.rewind();
+        let (ts, _) = player.next_frame().unwrap();
+        assert_eq!(ts, 0);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_player_skips_audio_region() {
+        let path = temp_recording_path("player_audio.aldrec");
+
+        let mut recorder = Recorder::new(&path)
+            .unwrap()
+            .with_dimensions(4, 4)
+            .with_fps(30)
+            .with_audio(48_000);
+        recorder.write_frame(&[7u8; 8], 0).unwrap();
+        recorder.write_frame(&[8u8; 8], 33).unwrap();
+        recorder
+            .write_audio_frame(
+                &[0f32; 16]
+                    .iter()
+                    .flat_map(|s| s.to_le_bytes())
+                    .collect::<Vec<_>>(),
+                0,
+            )
+            .unwrap();
+        recorder.finish().unwrap();
+
+        let mut player = RecordingPlayer::open(&path).unwrap();
+        assert!(player.next_frame().is_some());
+        assert!(player.next_frame().is_some());
+        // The audio region must not surface as video frames.
+        assert!(player.next_frame().is_none());
 
         let _ = std::fs::remove_file(&path);
     }

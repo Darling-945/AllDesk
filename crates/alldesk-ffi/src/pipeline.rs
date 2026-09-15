@@ -555,7 +555,6 @@ impl AudioReceiverPipeline {
 // ---------------------------------------------------------------------------
 // Clipboard sync pipeline
 // ---------------------------------------------------------------------------
-
 /// Bidirectional clipboard sync: poll the local clipboard for changes and
 /// send them to the peer, while a dedicated receive task applies incoming
 /// updates. Both host and viewer use the same logic; the initiator opens
@@ -660,6 +659,102 @@ impl ClipboardPipeline {
 
             let data = ClipboardSync::serialize_content(&content);
             self.transport.send(Channel::Clipboard, &data).await?;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chat pipeline
+// ---------------------------------------------------------------------------
+
+/// Longest accepted chat message in bytes. Chat rides a QUIC stream, so
+/// there is no hard transport limit — this guards against runaway input.
+const CHAT_MAX_MESSAGE_BYTES: usize = 8 * 1024;
+
+/// Bidirectional session text chat. One side (the viewer) opens the Chat
+/// stream with a handshake byte; both sides then exchange UTF-8 messages,
+/// each as one length-prefixed transport message. Received messages are
+/// broadcast to the FFI layer (watch_chat_messages) via the shared sender.
+pub struct ChatPipeline {
+    transport: QuicTransport,
+    /// Broadcasts incoming peer messages to stream subscribers.
+    msg_tx: broadcast::Sender<String>,
+    is_initiator: bool,
+}
+
+unsafe impl Send for ChatPipeline {}
+
+impl ChatPipeline {
+    pub fn new(
+        transport: QuicTransport,
+        msg_tx: broadcast::Sender<String>,
+        is_initiator: bool,
+    ) -> Self {
+        Self {
+            transport,
+            msg_tx,
+            is_initiator,
+        }
+    }
+
+    /// The sender peers subscribe to for incoming messages.
+    pub fn msg_sender(&self) -> broadcast::Sender<String> {
+        self.msg_tx.clone()
+    }
+
+    /// Send a locally-typed message to the peer. Errors when disconnected.
+    pub async fn send_message(&mut self, text: &str) -> Result<()> {
+        if text.len() > CHAT_MAX_MESSAGE_BYTES {
+            return Err(alldesk_core::Error::Network("chat message too long".into()));
+        }
+        self.transport.send(Channel::Chat, text.as_bytes()).await
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        // Establish the stream: the initiator opens it, the acceptor waits.
+        if self.is_initiator {
+            self.transport.send(Channel::Chat, &[0x00]).await?;
+        } else {
+            tokio::time::timeout(ACCEPT_TIMEOUT, self.transport.accept_channel(Channel::Chat))
+                .await
+                .map_err(|_| {
+                    alldesk_core::Error::Network("timed out waiting for Chat stream (15s)".into())
+                })?
+                .map_err(|e| alldesk_core::Error::Network(format!("accept Chat: {}", e)))?;
+            // Discard the handshake byte.
+            let _ = self.transport.recv(Channel::Chat).await;
+        }
+        tracing::info!(
+            "chat pipeline ready ({})",
+            if self.is_initiator {
+                "initiator"
+            } else {
+                "acceptor"
+            }
+        );
+
+        loop {
+            match self.transport.recv(Channel::Chat).await {
+                Ok(data) => {
+                    if data.is_empty() {
+                        continue; // stray handshake re-send
+                    }
+                    match String::from_utf8(data) {
+                        Ok(text) => {
+                            // No receivers yet is fine — messages are
+                            // session-scoped and simply go unread.
+                            let _ = self.msg_tx.send(text);
+                        }
+                        Err(e) => {
+                            tracing::warn!("chat message not valid UTF-8: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("recv chat: {}", e);
+                    return Err(e);
+                }
+            }
         }
     }
 }

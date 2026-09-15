@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::connection_quality::{ConnectionQuality, QualityCollector};
 use crate::pipeline::{
-    AudioReceiverPipeline, AudioSenderPipeline, ClipboardPipeline, ReceiverPipeline,
+    AudioReceiverPipeline, AudioSenderPipeline, ChatPipeline, ClipboardPipeline, ReceiverPipeline,
     SenderPipeline, VideoFrame,
 };
 use alldesk_core::adaptive::{AdaptiveController, AdaptiveTargets, LossRateTracker};
@@ -17,6 +17,7 @@ use alldesk_net::channel::Channel;
 use alldesk_net::reconnect::ReconnectManager;
 use alldesk_net::{LanDiscovery, QuicEndpoint, Transport};
 
+use alldesk_codec::decoder::VideoDecoder as _;
 use alldesk_files::transfer::FileTransfer;
 use alldesk_platform::input::{ButtonState, InputController, KeyCode, KeyState, MouseButton};
 use alldesk_recording::Recorder;
@@ -126,6 +127,12 @@ static FRAME_TX: OnceLock<Mutex<Option<tokio::sync::broadcast::Sender<VideoFrame
     OnceLock::new();
 static INPUT_TRANSPORT: OnceLock<Mutex<Option<alldesk_net::transport::QuicTransport>>> =
     OnceLock::new();
+/// Sender of incoming chat messages for the active session (viewer or host).
+static CHAT_TX: OnceLock<Mutex<Option<tokio::sync::broadcast::Sender<String>>>> = OnceLock::new();
+/// Transport used to send outgoing chat messages; the receiving half is
+/// owned by the session's ChatPipeline task.
+static CHAT_SENDER: OnceLock<Mutex<Option<alldesk_net::transport::QuicTransport>>> =
+    OnceLock::new();
 /// Viewer-side session recorder (set by start_session_recording).
 static RECORDER: OnceLock<Mutex<Option<Arc<std::sync::Mutex<Recorder>>>>> = OnceLock::new();
 
@@ -141,6 +148,14 @@ fn input_transport_lock() -> &'static Mutex<Option<alldesk_net::transport::QuicT
     INPUT_TRANSPORT.get_or_init(|| Mutex::new(None))
 }
 
+fn chat_tx_lock() -> &'static Mutex<Option<tokio::sync::broadcast::Sender<String>>> {
+    CHAT_TX.get_or_init(|| Mutex::new(None))
+}
+
+fn chat_sender_lock() -> &'static Mutex<Option<alldesk_net::transport::QuicTransport>> {
+    CHAT_SENDER.get_or_init(|| Mutex::new(None))
+}
+
 fn recorder_lock() -> &'static Mutex<Option<Arc<std::sync::Mutex<Recorder>>>> {
     RECORDER.get_or_init(|| Mutex::new(None))
 }
@@ -154,6 +169,8 @@ struct AppState {
     audio_sender_task: Option<tokio::task::JoinHandle<()>>,
     audio_receiver_task: Option<tokio::task::JoinHandle<()>>,
     clipboard_task: Option<tokio::task::JoinHandle<()>>,
+    /// Session text chat task (viewer side; host chats live in the accept loop).
+    chat_task: Option<tokio::task::JoinHandle<()>>,
     /// Watches the viewer connection and rebuilds the session after drops.
     reconnect_task: Option<tokio::task::JoinHandle<()>>,
     /// Samples RTT/loss/bandwidth while a viewer session is active.
@@ -184,6 +201,7 @@ fn app_state() -> &'static RwLock<AppState> {
             audio_sender_task: None,
             audio_receiver_task: None,
             clipboard_task: None,
+            chat_task: None,
             reconnect_task: None,
             quality_task: None,
             session_generation: 0,
@@ -359,6 +377,12 @@ async fn start_server_internal(
                             true,
                             shared_streams.clone(),
                         );
+                    let chat_host_transport =
+                        alldesk_net::transport::QuicTransport::with_shared_streams(
+                            conn.clone(),
+                            true,
+                            shared_streams.clone(),
+                        );
 
                     // Start input handler concurrently (host-side: receive viewer input → inject to OS)
                     let input_conn = conn.clone();
@@ -433,6 +457,20 @@ async fn start_server_internal(
                         run_file_receiver(file_host_transport).await;
                     });
 
+                    // Chat (bidirectional): host side accepts the stream the
+                    // viewer opens. A transport clone is kept for outgoing
+                    // messages (the stream table is shared).
+                    let (chat_tx, _chat_rx) = tokio::sync::broadcast::channel::<String>(64);
+                    let mut chat_pipeline =
+                        ChatPipeline::new(chat_host_transport.clone(), chat_tx.clone(), false);
+                    let chat_handle = tokio::spawn(async move {
+                        if let Err(e) = chat_pipeline.run().await {
+                            tracing::debug!("chat pipeline ended: {}", e);
+                        }
+                    });
+                    *chat_tx_lock().lock().await = Some(chat_tx);
+                    *chat_sender_lock().lock().await = Some(chat_host_transport);
+
                     // Wait for all tasks
                     let _ = tokio::join!(
                         sender_handle,
@@ -440,7 +478,8 @@ async fn start_server_internal(
                         audio_sender_handle,
                         clipboard_handle,
                         file_handle,
-                        adaptive_handle
+                        adaptive_handle,
+                        chat_handle
                     );
                     tracing::info!("viewer session ended");
                 }
@@ -608,6 +647,20 @@ async fn install_viewer_session(
     }
     let quality_task = tokio::spawn(run_quality_sampler(conn.clone(), quality));
 
+    // Chat (bidirectional, viewer side): the viewer opens the Chat stream.
+    let chat_viewer_transport = alldesk_net::transport::QuicTransport::with_shared_streams(
+        conn.clone(),
+        true,
+        shared_streams.clone(),
+    );
+    let (chat_tx, _chat_rx) = tokio::sync::broadcast::channel::<String>(64);
+    let mut chat_pipeline = ChatPipeline::new(chat_viewer_transport.clone(), chat_tx.clone(), true);
+    let chat_task = tokio::spawn(async move {
+        if let Err(e) = chat_pipeline.run().await {
+            tracing::debug!("chat pipeline ended: {}", e);
+        }
+    });
+
     let mut state = app_state().write().await;
     if let Some(old) = state.client.take() {
         old.endpoint.close();
@@ -619,6 +672,7 @@ async fn install_viewer_session(
         &state.receiver_task,
         &state.audio_receiver_task,
         &state.clipboard_task,
+        &state.chat_task,
         &state.quality_task,
     ]
     .into_iter()
@@ -637,6 +691,7 @@ async fn install_viewer_session(
     state.receiver_task = Some(receiver_task);
     state.audio_receiver_task = Some(audio_receiver_task);
     state.clipboard_task = Some(clipboard_task);
+    state.chat_task = Some(chat_task);
     state.quality_task = Some(quality_task);
     state.video_active = false;
     state.last_pipeline_error = None;
@@ -646,6 +701,8 @@ async fn install_viewer_session(
     *frame_tx_lock().lock().await = Some(frame_tx);
     *frame_rx_lock().lock().await = Some(frame_rx);
     *input_transport_lock().lock().await = Some(input_transport);
+    *chat_tx_lock().lock().await = Some(chat_tx);
+    *chat_sender_lock().lock().await = Some(chat_viewer_transport);
 }
 
 /// Automatically reconnect after a connection drop (viewer side). Runs for
@@ -832,6 +889,10 @@ pub async fn disconnect() -> String {
         h.abort();
         msgs.push("clipboard sync stopped".into());
     }
+    if let Some(h) = state.chat_task.take() {
+        h.abort();
+        msgs.push("chat stopped".into());
+    }
     if let Some(h) = state.reconnect_task.take() {
         h.abort();
         msgs.push("reconnect supervisor stopped".into());
@@ -843,6 +904,8 @@ pub async fn disconnect() -> String {
     *frame_tx_lock().lock().await = None;
     *frame_rx_lock().lock().await = None;
     *input_transport_lock().lock().await = None;
+    *chat_tx_lock().lock().await = None;
+    *chat_sender_lock().lock().await = None;
 
     state.video_active = false;
     state.last_pipeline_error = None;
@@ -1232,6 +1295,63 @@ pub async fn watch_video_frames(
         }
         // Loop back around: wait for the next session's frame channel
         // (reconnect) unless the subscriber is gone.
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session chat
+// ---------------------------------------------------------------------------
+
+/// Send a chat message to the connected peer (works on both host and viewer
+/// side; each session registers its outgoing transport).
+pub async fn send_chat_message(text: String) -> Result<(), String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Ok(());
+    }
+    let mut transport = chat_sender_lock()
+        .lock()
+        .await
+        .take()
+        .ok_or_else(|| "not connected".to_string())?;
+    let result = transport
+        .send(Channel::Chat, text.as_bytes())
+        .await
+        .map_err(|e| format!("send chat: {}", e));
+    chat_sender_lock().lock().await.replace(transport);
+    result
+}
+
+/// Subscribe to incoming peer chat messages (push stream; survives
+/// reconnects by waiting for the next session's channel, same pattern as
+/// watch_video_frames).
+pub async fn watch_chat_messages(
+    sink: crate::frb_generated::StreamSink<String>,
+) -> Result<(), String> {
+    loop {
+        let tx = loop {
+            let tx = chat_tx_lock().lock().await.clone();
+            if let Some(tx) = tx {
+                break tx;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+        let mut rx = tx.subscribe();
+        // Keep CHAT_TX the channel's last sender so `Closed` fires when a
+        // new session replaces it (see watch_video_frames for the details).
+        drop(tx);
+
+        loop {
+            match rx.recv().await {
+                Ok(text) => {
+                    if sink.add(text).is_err() {
+                        return Ok(()); // subscription cancelled
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
     }
 }
 
@@ -1642,6 +1762,115 @@ pub async fn stop_session_recording() -> Result<String, String> {
     Ok(format!("saved {} frames", frames))
 }
 
+// ---------------------------------------------------------------------------
+// Recording playback (decodes stored VP9 frames for the Flutter player)
+// ---------------------------------------------------------------------------
+
+/// Active recording playback session: file cursor + VP9 decoder.
+struct RecordingPlayback {
+    player: alldesk_recording::RecordingPlayer,
+    decoder: Option<alldesk_codec::vp9::Vp9Decoder>,
+}
+
+static PLAYBACK: OnceLock<Mutex<Option<RecordingPlayback>>> = OnceLock::new();
+
+fn playback_lock() -> &'static Mutex<Option<RecordingPlayback>> {
+    PLAYBACK.get_or_init(|| Mutex::new(None))
+}
+
+/// Metadata of a recording opened for playback.
+pub struct RecordingInfo {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub frame_count: u32,
+    pub duration_ms: u64,
+}
+
+/// Open an ALDREC recording for sequential playback. Only one recording can
+/// be open at a time; opening another one replaces it.
+pub async fn start_recording_playback(path: String) -> Result<RecordingInfo, String> {
+    let player = alldesk_recording::RecordingPlayer::open(&path)
+        .map_err(|e| format!("open '{}': {}", path, e))?;
+    let info = RecordingInfo {
+        width: player.width(),
+        height: player.height(),
+        fps: player.fps(),
+        frame_count: player.frame_count(),
+        duration_ms: player.duration_ms(),
+    };
+    tracing::info!(
+        "recording playback opened: {}x{} @ {}fps, {} frames (~{}ms)",
+        info.width,
+        info.height,
+        info.fps,
+        info.frame_count,
+        info.duration_ms
+    );
+    *playback_lock().lock().await = Some(RecordingPlayback {
+        player,
+        decoder: None,
+    });
+    Ok(info)
+}
+
+/// Decode the next stored frame to BGRA. Returns None at the end of the
+/// recording (or if no playback is open). Undecodable frames are skipped
+/// with a warning so one corrupt frame can't stall playback.
+pub async fn recording_next_frame() -> Option<VideoFrameMsg> {
+    let mut guard = playback_lock().lock().await;
+    let pb = guard.as_mut()?;
+
+    loop {
+        let (ts, payload) = pb.player.next_frame()?;
+        if pb.decoder.is_none() {
+            match alldesk_codec::vp9::Vp9Decoder::new(pb.player.width(), pb.player.height()) {
+                Ok(dec) => pb.decoder = Some(dec),
+                Err(e) => {
+                    tracing::warn!("playback decoder init: {}", e);
+                    return None;
+                }
+            }
+        }
+        let packet = alldesk_codec::encoder::EncodedPacket {
+            data: payload,
+            is_keyframe: false,
+            timestamp_ms: ts,
+            codec: alldesk_codec::encoder::Codec::VP9,
+        };
+        match pb.decoder.as_mut().unwrap().decode(&packet) {
+            Ok(frame) => {
+                return Some(VideoFrameMsg {
+                    width: frame.width,
+                    height: frame.height,
+                    bgra: frame.data,
+                });
+            }
+            Err(e) => {
+                tracing::warn!("playback decode, skipping frame: {}", e);
+                // continue to the next frame
+            }
+        }
+    }
+}
+
+/// Rewind the open playback to the first frame.
+pub async fn rewind_recording_playback() -> Result<(), String> {
+    let mut guard = playback_lock().lock().await;
+    let pb = guard
+        .as_mut()
+        .ok_or_else(|| "no playback open".to_string())?;
+    pb.player.rewind();
+    // A fresh decoder keeps references intact when replaying from the start.
+    pb.decoder = None;
+    Ok(())
+}
+
+/// Close the open playback session.
+pub async fn stop_recording_playback() {
+    *playback_lock().lock().await = None;
+}
+
 /// Push a video frame from the Android screen capture service into Rust.
 #[cfg(target_os = "android")]
 #[flutter_rust_bridge::frb(sync)]
@@ -1698,6 +1927,10 @@ pub async fn stop_stream() -> String {
         h.abort();
         msgs.push("clipboard sync stopped".into());
     }
+    if let Some(h) = state.chat_task.take() {
+        h.abort();
+        msgs.push("chat stopped".into());
+    }
     if let Some(h) = state.reconnect_task.take() {
         h.abort();
         msgs.push("reconnect supervisor stopped".into());
@@ -1708,6 +1941,8 @@ pub async fn stop_stream() -> String {
     *frame_tx_lock().lock().await = None;
     *frame_rx_lock().lock().await = None;
     *input_transport_lock().lock().await = None;
+    *chat_tx_lock().lock().await = None;
+    *chat_sender_lock().lock().await = None;
 
     state.video_active = false;
     state.last_pipeline_error = None;

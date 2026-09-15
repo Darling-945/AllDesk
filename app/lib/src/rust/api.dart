@@ -6,8 +6,8 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `app_state`, `current_recorder`, `decode_special_key`, `ensure_peer_id`, `frame_rx_lock`, `frame_tx_lock`, `handle_key_event`, `handle_mouse_event`, `handle_scroll_event`, `input_transport_lock`, `install_viewer_session`, `local_ip_addresses`, `received_files_dir`, `record_pipeline_error`, `recorder_lock`, `run_adaptive_controller`, `run_file_receiver`, `run_input_handler`, `run_quality_sampler`, `sanitize_remote_filename`, `send_file_session`, `start_server_internal`, `supervise_connection`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AppState`, `CachedPeer`, `ClientState`, `ServerState`, `SessionState`
+// These functions are ignored because they are not marked as `pub`: `app_state`, `chat_sender_lock`, `chat_tx_lock`, `current_recorder`, `decode_special_key`, `ensure_peer_id`, `frame_rx_lock`, `frame_tx_lock`, `handle_key_event`, `handle_mouse_event`, `handle_scroll_event`, `input_transport_lock`, `install_viewer_session`, `local_ip_addresses`, `playback_lock`, `received_files_dir`, `record_pipeline_error`, `recorder_lock`, `run_adaptive_controller`, `run_file_receiver`, `run_input_handler`, `run_quality_sampler`, `sanitize_remote_filename`, `send_file_session`, `start_server_internal`, `supervise_connection`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AppState`, `CachedPeer`, `ClientState`, `RecordingPlayback`, `ServerState`, `SessionState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Get the library version
@@ -69,6 +69,17 @@ Future<Uint8List?> pollVideoFrame() =>
 Stream<VideoFrameMsg> watchVideoFrames() =>
     RustLib.instance.api.crateApiWatchVideoFrames();
 
+/// Send a chat message to the connected peer (works on both host and viewer
+/// side; each session registers its outgoing transport).
+Future<void> sendChatMessage({required String text}) =>
+    RustLib.instance.api.crateApiSendChatMessage(text: text);
+
+/// Subscribe to incoming peer chat messages (push stream; survives
+/// reconnects by waiting for the next session's channel, same pattern as
+/// watch_video_frames).
+Stream<String> watchChatMessages() =>
+    RustLib.instance.api.crateApiWatchChatMessages();
+
 /// Send a mouse event to the remote peer (viewer side).
 Future<void> sendMouseEvent(
         {required double x, required double y, required String action}) =>
@@ -110,6 +121,25 @@ Future<String> startSessionRecording({required String path}) =>
 /// Stop recording and finalize the file. Returns the output path.
 Future<String> stopSessionRecording() =>
     RustLib.instance.api.crateApiStopSessionRecording();
+
+/// Open an ALDREC recording for sequential playback. Only one recording can
+/// be open at a time; opening another one replaces it.
+Future<RecordingInfo> startRecordingPlayback({required String path}) =>
+    RustLib.instance.api.crateApiStartRecordingPlayback(path: path);
+
+/// Decode the next stored frame to BGRA. Returns None at the end of the
+/// recording (or if no playback is open). Undecodable frames are skipped
+/// with a warning so one corrupt frame can't stall playback.
+Future<VideoFrameMsg?> recordingNextFrame() =>
+    RustLib.instance.api.crateApiRecordingNextFrame();
+
+/// Rewind the open playback to the first frame.
+Future<void> rewindRecordingPlayback() =>
+    RustLib.instance.api.crateApiRewindRecordingPlayback();
+
+/// Close the open playback session.
+Future<void> stopRecordingPlayback() =>
+    RustLib.instance.api.crateApiStopRecordingPlayback();
 
 /// Stub for non-Android platforms.
 bool pushAndroidFrame(
@@ -192,6 +222,42 @@ class PeerInfo {
           peerId == other.peerId &&
           peerName == other.peerName &&
           address == other.address;
+}
+
+/// Metadata of a recording opened for playback.
+class RecordingInfo {
+  final int width;
+  final int height;
+  final int fps;
+  final int frameCount;
+  final BigInt durationMs;
+
+  const RecordingInfo({
+    required this.width,
+    required this.height,
+    required this.fps,
+    required this.frameCount,
+    required this.durationMs,
+  });
+
+  @override
+  int get hashCode =>
+      width.hashCode ^
+      height.hashCode ^
+      fps.hashCode ^
+      frameCount.hashCode ^
+      durationMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RecordingInfo &&
+          runtimeType == other.runtimeType &&
+          width == other.width &&
+          height == other.height &&
+          fps == other.fps &&
+          frameCount == other.frameCount &&
+          durationMs == other.durationMs;
 }
 
 /// One decoded video frame pushed to Flutter (viewer side).

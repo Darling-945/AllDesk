@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../../src/rust/api.dart' as rust_api;
 
 /// Sends files to the connected remote peer (viewer → host).
@@ -64,7 +65,10 @@ class _FileTransferPageState extends State<FileTransferPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('发送失败: $e')),
+          SnackBar(
+            content:
+                Text('${AppLocalizations.of(context)!.filesSendFailed}: $e'),
+          ),
         );
       }
     } finally {
@@ -81,6 +85,7 @@ class _FileTransferPageState extends State<FileTransferPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final active = _status['active'] == true;
     final direction = _status['direction'] as String? ?? 'none';
     final filename = _status['filename'] as String? ?? '';
@@ -89,7 +94,7 @@ class _FileTransferPageState extends State<FileTransferPage> {
     final received = direction == 'receiving';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('文件传输')),
+      appBar: AppBar(title: Text(l10n.filesTitle)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
@@ -100,13 +105,13 @@ class _FileTransferPageState extends State<FileTransferPage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  received ? '正在接收文件' : '发送文件到远程设备',
+                  received ? l10n.filesReceiving : l10n.filesSending,
                   style: Theme.of(context).textTheme.titleMedium,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '远程设备收到的文件保存在 Downloads/AllDesk 目录',
+                  l10n.filesHint,
                   style: Theme.of(context).textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),
@@ -128,7 +133,10 @@ class _FileTransferPageState extends State<FileTransferPage> {
                           else
                             const LinearProgressIndicator(),
                           const SizedBox(height: 8),
-                          Text('${_status['transferred'] ?? 0} / ${_status['total'] ?? 0} 字节'),
+                          Text(l10n.filesBytes(
+                            (_status['transferred'] as num?)?.toInt() ?? 0,
+                            (_status['total'] as num?)?.toInt() ?? 0,
+                          )),
                         ],
                       ),
                     ),
@@ -138,12 +146,12 @@ class _FileTransferPageState extends State<FileTransferPage> {
                 FilledButton.icon(
                   onPressed: (active || _picking) ? null : _pickAndSend,
                   icon: const Icon(Icons.upload_file),
-                  label: Text(_picking ? '选择文件…' : '选择文件并发送'),
+                  label: Text(_picking ? l10n.filesPicking : l10n.filesPick),
                 ),
                 if (error != null && error.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   Text(
-                    '上次传输出错: $error',
+                    l10n.filesLastError(error),
                     style: TextStyle(color: Theme.of(context).colorScheme.error),
                     textAlign: TextAlign.center,
                   ),

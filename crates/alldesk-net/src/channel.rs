@@ -5,7 +5,9 @@ pub enum Channel {
     Input,
     Clipboard,
     File,
-    Whiteboard,
+    /// Bidirectional session text chat (reuses the slot formerly held by
+    /// the removed Whiteboard channel; stream id stays stable).
+    Chat,
     Control,
 }
 
@@ -17,7 +19,7 @@ impl Channel {
             Self::Input => 2,
             Self::Clipboard => 3,
             Self::File => 4,
-            Self::Whiteboard => 5,
+            Self::Chat => 5,
             Self::Control => 6,
         }
     }
@@ -34,7 +36,7 @@ impl Channel {
             2 => Some(Self::Input),
             3 => Some(Self::Clipboard),
             4 => Some(Self::File),
-            5 => Some(Self::Whiteboard),
+            5 => Some(Self::Chat),
             6 => Some(Self::Control),
             _ => None,
         }
@@ -53,7 +55,7 @@ mod tests {
             Channel::Input,
             Channel::Clipboard,
             Channel::File,
-            Channel::Whiteboard,
+            Channel::Chat,
             Channel::Control,
         ] {
             assert_eq!(Channel::from_stream_id(ch.stream_id()), Some(ch));
@@ -73,7 +75,7 @@ mod tests {
         assert!(!Channel::Input.is_datagram());
         assert!(!Channel::Clipboard.is_datagram());
         assert!(!Channel::File.is_datagram());
-        assert!(!Channel::Whiteboard.is_datagram());
+        assert!(!Channel::Chat.is_datagram());
         assert!(!Channel::Control.is_datagram());
     }
 
@@ -85,7 +87,7 @@ mod tests {
             Channel::Input,
             Channel::Clipboard,
             Channel::File,
-            Channel::Whiteboard,
+            Channel::Chat,
             Channel::Control,
         ]
         .iter()

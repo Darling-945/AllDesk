@@ -2,7 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../l10n/app_localizations.dart';
 import '../../providers/discovery_provider.dart';
+import '../../services/connection_store.dart';
 import '../../services/platform_service.dart';
 import '../../src/rust/api.dart' as rust_api;
 
@@ -18,11 +21,24 @@ class _HomePageState extends ConsumerState<HomePage> {
   String _diagnostics = '';
   bool _showDiag = false;
   bool _isSharing = false;
+  ConnectionStore? _store;
+  List<ConnectionEntry> _history = const [];
 
   @override
   void initState() {
     super.initState();
     Future.microtask(() => ref.read(discoveryProvider.notifier).startPolling());
+    _loadHistory();
+    if (Platform.isAndroid) _maybeShowPermissionGuide();
+  }
+
+  /// One-time first-launch permission checklist (Android only).
+  Future<void> _maybeShowPermissionGuide() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('perm_guide_shown') != true) {
+      await prefs.setBool('perm_guide_shown', true);
+      if (mounted) context.push('/permissions');
+    }
   }
 
   @override
@@ -30,6 +46,23 @@ class _HomePageState extends ConsumerState<HomePage> {
     ref.read(discoveryProvider.notifier).stopPolling();
     _peerIdController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadHistory() async {
+    final store = await ConnectionStore.load();
+    if (mounted) {
+      setState(() {
+        _store = store;
+        _history = store.entries;
+      });
+    }
+  }
+
+  Future<void> _recordConnection(String address, {String? name}) async {
+    final store = _store;
+    if (store == null) return;
+    await store.record(address, name: name);
+    _loadHistory();
   }
 
   Future<void> _runDiag() async {
@@ -55,6 +88,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final peers = ref.watch(discoveryProvider);
     final myPeerId = ref.watch(peerIdProvider);
     final theme = Theme.of(context);
@@ -63,14 +97,26 @@ class _HomePageState extends ConsumerState<HomePage> {
       appBar: AppBar(
         title: const Text('AllDesk'),
         actions: [
-          if (Platform.isAndroid)
+          IconButton(
+            icon: const Icon(Icons.video_library),
+            tooltip: l10n.homeRecordings,
+            onPressed: () => context.go('/recordings'),
+          ),
+          if (Platform.isAndroid) ...[
+            IconButton(
+              icon: const Icon(Icons.privacy_tip_outlined),
+              tooltip: l10n.permTitle,
+              onPressed: () => context.push('/permissions'),
+            ),
             IconButton(
               icon: Icon(_isSharing ? Icons.screen_share : Icons.stop_screen_share),
-              tooltip: _isSharing ? 'Stop Sharing' : 'Start Screen Sharing',
+              tooltip: _isSharing ? l10n.homeStopSharing : l10n.homeStartSharing,
               onPressed: _toggleScreenSharing,
             ),
+          ],
           IconButton(
             icon: const Icon(Icons.settings),
+            tooltip: l10n.commonSettings,
             onPressed: () => context.go('/settings'),
           ),
         ],
@@ -94,11 +140,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Your Peer ID', style: theme.textTheme.labelSmall),
+                              Text(l10n.homePeerId, style: theme.textTheme.labelSmall),
                               myPeerId.when(
                                 data: (id) => SelectableText(id, style: theme.textTheme.bodyMedium),
                                 loading: () => const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                                error: (_, __) => const Text('Error loading ID'),
+                                error: (_, __) => Text(l10n.homePeerIdError),
                               ),
                             ],
                           ),
@@ -118,7 +164,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Screen sharing active — other devices can connect',
+                              l10n.homeScreenSharingActive,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onPrimaryContainer,
                               ),
@@ -137,17 +183,17 @@ class _HomePageState extends ConsumerState<HomePage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Connect to Device', style: theme.textTheme.titleMedium),
+                        Text(l10n.homeConnectTitle, style: theme.textTheme.titleMedium),
                         const SizedBox(height: 12),
                         Row(
                           children: [
                             Expanded(
                               child: TextField(
                                 controller: _peerIdController,
-                                decoration: const InputDecoration(
-                                  hintText: 'Enter Peer ID or IP address',
-                                  border: OutlineInputBorder(),
-                                  prefixIcon: Icon(Icons.link),
+                                decoration: InputDecoration(
+                                  hintText: l10n.homeConnectHint,
+                                  border: const OutlineInputBorder(),
+                                  prefixIcon: const Icon(Icons.link),
                                 ),
                               ),
                             ),
@@ -155,7 +201,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                             FilledButton.icon(
                               onPressed: _connect,
                               icon: const Icon(Icons.arrow_forward),
-                              label: const Text('Connect'),
+                              label: Text(l10n.commonConnect),
                             ),
                           ],
                         ),
@@ -165,18 +211,76 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
                 const SizedBox(height: 24),
 
+                // Recent connections & favorites
+                if (_history.isNotEmpty) ...[
+                  Row(
+                    children: [
+                      Text(l10n.homeRecentTitle, style: theme.textTheme.titleMedium),
+                      const Spacer(),
+                      Text(
+                        l10n.homeFavoritesCount(
+                            _history.where((e) => e.favorite).length),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ..._history.take(5).map((entry) => Card(
+                        child: ListTile(
+                          dense: true,
+                          leading: Icon(
+                            entry.favorite ? Icons.star : Icons.history,
+                            color: entry.favorite
+                                ? Colors.amber
+                                : theme.colorScheme.outline,
+                          ),
+                          title: Text(entry.name ?? entry.address),
+                          subtitle: Text(entry.address),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  entry.favorite
+                                      ? Icons.star
+                                      : Icons.star_border,
+                                  color: entry.favorite
+                                      ? Colors.amber
+                                      : theme.colorScheme.outline,
+                                ),
+                                tooltip: entry.favorite
+                                    ? l10n.homeUnfavorite
+                                    : l10n.homeFavorite,
+                                onPressed: () async {
+                                  await _store?.toggleFavorite(entry.address);
+                                  _loadHistory();
+                                },
+                              ),
+                              FilledButton.tonal(
+                                onPressed: () => _connectTo(entry.address,
+                                    name: entry.name),
+                                child: Text(l10n.commonConnect),
+                              ),
+                            ],
+                          ),
+                          onTap: () => _connectTo(entry.address, name: entry.name),
+                        ),
+                      )),
+                  const SizedBox(height: 24),
+                ],
+
                 // LAN device list
                 Row(
                   children: [
-                    Text('Devices on LAN', style: theme.textTheme.titleMedium),
+                    Text(l10n.homeDevicesTitle, style: theme.textTheme.titleMedium),
                     const Spacer(),
                     const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
                     const SizedBox(width: 8),
-                    Text('Scanning...', style: theme.textTheme.bodySmall),
+                    Text(l10n.homeScanning, style: theme.textTheme.bodySmall),
                     const SizedBox(width: 12),
                     IconButton(
                       icon: const Icon(Icons.bug_report, size: 20),
-                      tooltip: 'Diagnostics',
+                      tooltip: l10n.homeDiagnostics,
                       onPressed: _runDiag,
                     ),
                   ],
@@ -191,7 +295,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                               Icon(Icons.wifi_find, size: 48, color: theme.colorScheme.outline),
                               const SizedBox(height: 12),
                               Text(
-                                'Scanning for devices...',
+                                l10n.homeScanningForDevices,
                                 style: theme.textTheme.bodyLarge,
                               ),
                             ],
@@ -210,8 +314,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 subtitle: Text('${peer.peerId}\n${peer.address}'),
                                 isThreeLine: true,
                                 trailing: FilledButton(
-                                  onPressed: () => context.go('/remote?addr=${Uri.encodeComponent(peer.address)}'),
-                                  child: const Text('Connect'),
+                                  onPressed: () => _connectTo(peer.address,
+                                      name: peer.peerName),
+                                  child: Text(l10n.commonConnect),
                                 ),
                               ),
                             );
@@ -236,7 +341,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                   children: [
                     Row(
                       children: [
-                        const Text('Diagnostics', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        Text(l10n.homeDiagnostics,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
                         const Spacer(),
                         IconButton(
                           icon: const Icon(Icons.close, color: Colors.white, size: 20),
@@ -261,7 +369,12 @@ class _HomePageState extends ConsumerState<HomePage> {
   void _connect() {
     final target = _peerIdController.text.trim();
     if (target.isNotEmpty) {
-      context.go('/remote?addr=${Uri.encodeComponent(target)}');
+      _connectTo(target);
     }
+  }
+
+  void _connectTo(String address, {String? name}) {
+    _recordConnection(address, name: name);
+    context.go('/remote?addr=${Uri.encodeComponent(address)}');
   }
 }

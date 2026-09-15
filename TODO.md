@@ -81,7 +81,17 @@
 
 ---
 
-## 本次优化完成项 (Phase 29+28+27+22+19+16+14+15+17+18+23+11+24+25+26)
+## 本次优化完成项 (Phase 31+30+29+28+27+22+19+16+14+15+17+18+23+11+24+25+26)
+
+### Phase 31: i18n + 聊天 + 权限引导 ✅
+- [x] **国际化 (i18n)** — flutter gen-l10n + arb 双语言(中文模板 + English,~90 键);MaterialApp 接入 localizationsDelegates/supportedLocales,语言跟随系统;全部页面(首页/远程/文件传输/录像/播放器/设置/聊天/权限)字符串改经 AppLocalizations;启动错误提示按当前语言构建;测试改为本地化 pump + zh/en 覆盖断言
+- [x] **聊天功能** — Channel::Whiteboard 复用为 Channel::Chat(流 ID 稳定);ChatPipeline 双向 UTF-8 消息(观察端开流、被控端 accept,一条消息一次 transport 发送);FFI send_chat_message + watch_chat_messages 推送流(重连存活,与帧流同模式);Flutter 聊天页(气泡列表/输入/自动滚动,会话内不持久化)+ 远程页工具栏入口
+- [x] **权限引导流程** — Android 首次启动自动弹出权限检查清单页(屏幕采集/无障碍输入/可选麦克风,逐项说明+状态+对应系统动作);不再显示记录在 shared_preferences;首页 AppBar 常驻入口;PlatformService 新增 isScreenCaptureGranted(宿主未实现时优雅降级)与 requestMicrophonePermission(permission_handler)
+
+### Phase 30: 功能补全 ✅
+- [x] **录屏播放器** — recording crate 新增 RecordingPlayer(游标式 next_frame/rewind,音频区隔离,2 tests);FFI start_recording_playback/recording_next_frame/rewind/stop(VP9 逐帧解码,坏帧跳过);录像列表页 + 播放器页(播放/暂停/重放/进度,按录像自身 fps 节拍);首页 AppBar 入口
+- [x] **设备收藏/连接历史** — ConnectionStore 基于 shared_preferences:连接(手动+LAN)自动入史,同地址去重置顶,上限 20;收藏星标;首页"最近连接"区一键重连(7 tests)
+- [x] **错误展示统一** — error_ui.dart(showErrorSnackBar + 全局 rootScaffoldMessengerKey);Rust 启动初始化失败改为 SnackBar 可见提示;录像/删除失败不再静默
 
 ### Phase 29: 次要项清理 ✅
 - [x] **帧推送事件驱动** — `watch_video_frames` FRB Stream 替代 33ms 轮询:帧解码完成即推送(消除平均 ~16ms 显示延迟与空轮询),Rust 侧合并旧帧只发最新;流在重连后自动切换到新会话通道(subscribe 后丢弃本地 sender 克隆,旧通道关闭即重新等待)
@@ -260,7 +270,7 @@
 - [x] **WebM 容器** — WebmMuxer EBML+SimpleBlock VP9输出 (6 tests)
 - [x] **录屏音频轨道** — ALDREC v2格式支持音频帧读写 (4 tests)
 - [x] **会话录制接线** — ReceiverPipeline 录制 VP9 帧，FFI start/stop_session_recording + 远程页录制按钮
-- [ ] **录屏播放器** — 无 ALDREC/WebM 回放 UI
+- [x] **录屏播放器** — RecordingPlayer 游标式顺序读取 + FFI(start/next_frame/rewind/stop，VP9 逐帧解码) + 录像列表页(删除/大小/日期) + 播放器页(按录像 fps 节拍的播放/暂停/重放/进度)，无 seek(VP9 帧间依赖，需关键帧索引才能支持)
 
 ---
 
@@ -285,15 +295,15 @@
 - [x] **连接质量指标** — QualityCollector RTT/丢包/带宽 + QualityLevel (15 tests)，get_connection_quality 每秒输出真实 quinn 指标
 - [x] **文件传输页面** — 选文件 + 进度轮询 + 进度卡片已实现
 - 已移除 **白板控件** — 随白板 crate 移除
-- [x] **错误展示** — 远程会话页在 UI 显示连接错误（其余页面仍用 debugPrint，待统一）
+- [x] **错误展示** — 统一 error_ui 工具(全局 messenger + showErrorSnackBar)；启动期 Rust 初始化失败会以 SnackBar 告知(此前仅 debugPrint)；录像读取/删除失败、传输失败均有可见提示；远程会话页在 UI 显示连接错误
 - [x] **连接重试** — Rust 侧 supervisor 断线自动重连（退避 + 代数防陈旧）；初次连接带重试循环
 - [x] **网络中断恢复** — 断线后自动重建会话并恢复画面/音频/剪贴板管线；无专门的重连状态 UI 提示
 - [ ] **暗色主题** — 基础主题切换已有，但未完善系统主题联动
-- [ ] **国际化 (i18n)** — 无多语言支持，所有文案硬编码中文
+- [x] **国际化 (i18n)** — gen-l10n + arb 双语言（zh 模板 + en），语言跟随系统，全部页面已接入
 - [ ] **辅助功能** — 无屏幕阅读器、高对比度、文字大小调整支持
-- [ ] **聊天/消息功能** — 无端到端文本聊天 UI
-- [ ] **设备收藏/历史** — 无设备收藏夹和连接历史记录
-- [ ] **权限引导流程** — 无统一的权限请求和解释 UI
+- [x] **聊天/消息功能** — QUIC Chat 通道双向文本聊天（推送流 + 气泡 UI，会话内不持久化）
+- [x] **设备收藏/历史** — ConnectionStore(shared_preferences 持久化)：连接自动入史(置顶去重、上限 20)、收藏星标、一键重连；首页"最近连接"区
+- [x] **权限引导流程** — Android 首启权限清单页（屏幕采集/无障碍/麦克风）+ 常驻入口
 
 ---
 
@@ -315,12 +325,12 @@
   - alldesk-net: 73 + 7 integration tests ✅ (Channel, QUIC, discovery, reconnect, ICE, flow, BWE, TLS pin, E2E crypto, latency)
   - alldesk-files: 45 tests ✅ (含CRC32校验 + manifest + 文件验证)
   - alldesk-platform: 57 tests ✅ (audio/clipboard/input 合并后，含序列号稳定性测试)
-  - alldesk-recording: 17 tests ✅ (write/read roundtrip, empty/large/error cases)
+  - alldesk-recording: 19 tests ✅ (write/read roundtrip + RecordingPlayer 顺序读取/回绕/音频区隔离)
   - alldesk-capture: 6 tests ✅ (config, pixel format, cursor)
   - server: 52 tests ✅ (registry, signaling, STUN IPv6, config, auth, metrics, bandwidth, TURN)
   - alldesk-codec: 10 tests（编译通过；本机缺 vpx.lib 无法链接测试二进制，CI 可跑）
-  - **Total: 275 tests, all passing locally**
-- [x] **Flutter 测试** — 44个测试覆盖主题/设置Provider/发现Provider/文件传输页面/路由
+  - **Total: 277 tests, all passing locally**
+- [x] **Flutter 测试** — 54个测试覆盖主题/设置Provider/发现Provider/文件传输页面/录像页面/路由/ConnectionStore(7个)/本地化(zh+en+参数化消息)
 - [ ] **集成测试** — QUIC集成测试已有(7个)，缺文件传输端到端测试
 - [ ] **性能基准** — 无编解码/网络/捕获性能 benchmark
 - [ ] **跨平台构建验证** — macOS/Linux 构建脚本缺失

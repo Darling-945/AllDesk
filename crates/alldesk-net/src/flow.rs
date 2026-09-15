@@ -86,7 +86,7 @@ impl FlowController {
 
     /// Create a new flow controller with custom configuration.
     pub fn with_config(config: FlowConfig) -> Self {
-        let num_channels = 7; // Video, Audio, Input, Clipboard, File, Whiteboard, Control
+        let num_channels = 7; // Video, Audio, Input, Clipboard, File, Chat, Control
         let mut stats = Vec::with_capacity(num_channels);
         for _ in 0..num_channels {
             stats.push(ChannelStats::default());

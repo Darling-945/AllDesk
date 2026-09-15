@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
+import '../../l10n/app_localizations.dart';
 import '../../src/rust/api.dart' as rust_api;
 import 'touch_gesture_handler.dart';
 
@@ -127,6 +128,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -155,7 +157,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'Connecting to ${widget.peerId}...',
+                        l10n.remoteConnectingTo(widget.peerId),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white),
                       ),
                     ],
@@ -169,6 +171,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
   }
 
   Widget _buildContent() {
+    final l10n = AppLocalizations.of(context)!;
     if (_error != null) {
       return Column(
         mainAxisSize: MainAxisSize.min,
@@ -179,7 +182,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
           const SizedBox(height: 16),
           FilledButton(
             onPressed: () => context.go('/'),
-            child: const Text('Go Back'),
+            child: Text(l10n.remoteGoBack),
           ),
         ],
       );
@@ -202,14 +205,14 @@ class _RemotePageState extends ConsumerState<RemotePage> {
         const Icon(Icons.desktop_windows, color: Colors.white54, size: 64),
         const SizedBox(height: 12),
         Text(
-          'Connected to ${widget.peerId}',
+          l10n.remoteConnectedTo(widget.peerId),
           style: const TextStyle(color: Colors.white),
         ),
         const SizedBox(height: 4),
         Text(
           _frameCount > 0
-              ? 'Waiting for video... ($_frameCount frames)'
-              : 'Video stream starting...',
+              ? l10n.remoteWaitingForVideo(_frameCount)
+              : l10n.remoteVideoStarting,
           style: const TextStyle(color: Colors.white54),
         ),
         if (_connectionStatus.isNotEmpty) ...[
@@ -228,6 +231,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
   }
 
   Widget _buildToolbar() {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       color: Colors.black87,
       child: Row(
@@ -236,7 +240,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
           IconButton(
             icon: Icon(_isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen, color: Colors.white),
             onPressed: _toggleFullscreen,
-            tooltip: _isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
+            tooltip: _isFullscreen ? l10n.remoteExitFullscreen : l10n.remoteFullscreen,
           ),
           if (_frameWidth > 0)
             Padding(
@@ -247,22 +251,27 @@ class _RemotePageState extends ConsumerState<RemotePage> {
               ),
             ),
           IconButton(
+            icon: const Icon(Icons.chat, color: Colors.white),
+            onPressed: () => context.go('/chat'),
+            tooltip: l10n.remoteChat,
+          ),
+          IconButton(
+            icon: const Icon(Icons.folder, color: Colors.white),
+            onPressed: () => context.go('/files'),
+            tooltip: l10n.remoteFileTransfer,
+          ),
+          IconButton(
             icon: Icon(
               _recording ? Icons.stop_circle : Icons.fiber_manual_record,
               color: _recording ? Colors.red : Colors.white,
             ),
             onPressed: _toggleRecording,
-            tooltip: _recording ? '停止录制' : '录制会话',
-          ),
-          IconButton(
-            icon: const Icon(Icons.folder, color: Colors.white),
-            onPressed: () => context.go('/files'),
-            tooltip: '文件传输',
+            tooltip: _recording ? l10n.remoteStopRecording : l10n.remoteStartRecording,
           ),
           IconButton(
             icon: const Icon(Icons.call_end, color: Colors.red),
             onPressed: () => context.go('/'),
-            tooltip: 'Disconnect',
+            tooltip: l10n.remoteDisconnect,
           ),
         ],
       ),
@@ -270,13 +279,14 @@ class _RemotePageState extends ConsumerState<RemotePage> {
   }
 
   Future<void> _toggleRecording() async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       if (_recording) {
         final summary = await rust_api.stopSessionRecording();
         if (mounted) setState(() => _recording = false);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('录制完成: $summary')),
+            SnackBar(content: Text(l10n.remoteRecordingDone(summary))),
           );
         }
       } else {
@@ -289,7 +299,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('录制操作失败: $e')),
+          SnackBar(content: Text(l10n.remoteRecordingFailed(e.toString()))),
         );
       }
     }

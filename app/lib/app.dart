@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme.dart';
 import 'core/router.dart';
+import 'l10n/app_localizations.dart';
 import 'providers/settings_provider.dart';
+import 'services/error_ui.dart';
 
 class AllDeskApp extends ConsumerWidget {
   const AllDeskApp({super.key});
@@ -18,6 +21,14 @@ class AllDeskApp extends ConsumerWidget {
 
     return MaterialApp.router(
       title: 'AllDesk',
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: themeMode,

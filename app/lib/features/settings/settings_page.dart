@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../l10n/app_localizations.dart';
 import '../../providers/settings_provider.dart';
 import '../../src/rust/api.dart' as rust_api;
 
@@ -49,6 +50,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final settings = ref.watch(settingsProvider);
     final theme = Theme.of(context);
 
@@ -58,25 +60,25 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/'),
         ),
-        title: const Text('Settings'),
+        title: Text(l10n.settingsTitle),
       ),
       body: ListView(
         children: [
           // --- Device Info ---
-          _sectionHeader('Device'),
+          _sectionHeader(l10n.settingsDevice),
           ListTile(
             leading: const Icon(Icons.fingerprint),
-            title: const Text('Peer ID'),
+            title: Text(l10n.settingsPeerId),
             subtitle: SelectableText(
-              _peerId.isEmpty ? 'Loading...' : _peerId,
+              _peerId.isEmpty ? l10n.commonLoading : _peerId,
               style: theme.textTheme.bodySmall,
             ),
           ),
           ListTile(
             leading: const Icon(Icons.person),
-            title: const Text('Display Name'),
+            title: Text(l10n.settingsDisplayName),
             subtitle: Text(
-              settings.displayName.isEmpty ? 'Not set (uses hostname)' : settings.displayName,
+              settings.displayName.isEmpty ? l10n.settingsNameNotSet : settings.displayName,
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _editDisplayName(settings),
@@ -85,18 +87,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const Divider(),
 
           // --- Display ---
-          _sectionHeader('Display'),
+          _sectionHeader(l10n.settingsDisplay),
           ListTile(
             leading: const Icon(Icons.dark_mode),
-            title: const Text('Theme'),
+            title: Text(l10n.settingsTheme),
             subtitle: Text(_themeLabel(settings.themeMode)),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _pickTheme(settings),
           ),
           SwitchListTile(
             secondary: const Icon(Icons.mouse),
-            title: const Text('Show Remote Cursor'),
-            subtitle: const Text('Render remote cursor on screen'),
+            title: Text(l10n.settingsShowCursor),
+            subtitle: Text(l10n.settingsShowCursorSub),
             value: settings.showRemoteCursor,
             onChanged: (v) => ref.read(settingsProvider.notifier).setShowRemoteCursor(v),
           ),
@@ -104,17 +106,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const Divider(),
 
           // --- Streaming ---
-          _sectionHeader('Streaming'),
+          _sectionHeader(l10n.settingsStreaming),
           ListTile(
             leading: const Icon(Icons.high_quality),
-            title: const Text('Video Quality'),
+            title: Text(l10n.settingsVideoQuality),
             subtitle: Text('${settings.bitrateKbps} kbps'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _pickBitrate(settings),
           ),
           ListTile(
             leading: const Icon(Icons.speed),
-            title: const Text('Frame Rate'),
+            title: Text(l10n.settingsFrameRate),
             subtitle: Text('${settings.fps} FPS'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _pickFps(settings),
@@ -123,18 +125,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const Divider(),
 
           // --- Network ---
-          _sectionHeader('Network'),
+          _sectionHeader(l10n.settingsNetwork),
           ListTile(
             leading: const Icon(Icons.lan),
-            title: const Text('QUIC Server Port'),
+            title: Text(l10n.settingsPort),
             subtitle: Text('${settings.serverPort}'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _editPort(settings),
           ),
           SwitchListTile(
             secondary: const Icon(Icons.auto_mode),
-            title: const Text('Auto-Connect to Last Device'),
-            subtitle: const Text('Connect on app launch'),
+            title: Text(l10n.settingsAutoConnect),
+            subtitle: Text(l10n.settingsAutoConnectSub),
             value: settings.autoConnect,
             onChanged: (v) => ref.read(settingsProvider.notifier).setAutoConnect(v),
           ),
@@ -142,23 +144,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const Divider(),
 
           // --- About ---
-          _sectionHeader('About'),
+          _sectionHeader(l10n.settingsAbout),
           ListTile(
             leading: const Icon(Icons.info_outline),
-            title: const Text('Version'),
-            subtitle: Text(_version.isEmpty ? 'Loading...' : _version),
+            title: Text(l10n.settingsVersion),
+            subtitle: Text(_version.isEmpty ? l10n.commonLoading : _version),
           ),
-          const ListTile(
-            leading: Icon(Icons.code),
-            title: Text('Open Source'),
-            subtitle: Text('Built with Rust + Flutter'),
+          ListTile(
+            leading: const Icon(Icons.code),
+            title: Text(l10n.settingsOpenSource),
+            subtitle: Text(l10n.settingsOpenSourceSub),
           ),
           const SizedBox(height: 24),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: OutlinedButton.icon(
               icon: const Icon(Icons.arrow_back),
-              label: const Text('Back to Home'),
+              label: Text(l10n.settingsBackHome),
               onPressed: () => context.go('/'),
             ),
           ),
@@ -183,22 +185,24 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   String _themeLabel(int mode) {
+    final l10n = AppLocalizations.of(context)!;
     switch (mode) {
-      case 1: return 'Light';
-      case 2: return 'Dark';
-      default: return 'System';
+      case 1: return l10n.settingsThemeLight;
+      case 2: return l10n.settingsThemeDark;
+      default: return l10n.settingsThemeSystem;
     }
   }
 
   void _pickTheme(AppSettings settings) {
+    final l10n = AppLocalizations.of(context)!;
     showDialog(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('Theme'),
+        title: Text(l10n.settingsTheme),
         children: [
-          _themeOption(ctx, 'System', 0, settings.themeMode),
-          _themeOption(ctx, 'Light', 1, settings.themeMode),
-          _themeOption(ctx, 'Dark', 2, settings.themeMode),
+          _themeOption(ctx, l10n.settingsThemeSystem, 0, settings.themeMode),
+          _themeOption(ctx, l10n.settingsThemeLight, 1, settings.themeMode),
+          _themeOption(ctx, l10n.settingsThemeDark, 2, settings.themeMode),
         ],
       ),
     );
@@ -222,11 +226,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   void _pickBitrate(AppSettings settings) {
+    final l10n = AppLocalizations.of(context)!;
     const options = [2000, 4000, 6000, 8000, 10000, 15000];
     showDialog(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('Video Quality'),
+        title: Text(l10n.settingsVideoQuality),
         children: options.map((v) => SimpleDialogOption(
           onPressed: () {
             ref.read(settingsProvider.notifier).setBitrate(v);
@@ -237,10 +242,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               Icon(settings.bitrateKbps == v ? Icons.radio_button_checked : Icons.radio_button_unchecked,
                   size: 20),
               const SizedBox(width: 12),
-              Text(v <= 2000 ? '$v kbps (Low)' :
-                   v <= 4000 ? '$v kbps (Medium)' :
-                   v <= 8000 ? '$v kbps (High)' :
-                   '$v kbps (Ultra)'),
+              Text(v <= 2000 ? '$v kbps (${l10n.settingsQualityLow})' :
+                   v <= 4000 ? '$v kbps (${l10n.settingsQualityMedium})' :
+                   v <= 8000 ? '$v kbps (${l10n.settingsQualityHigh})' :
+                   '$v kbps (${l10n.settingsQualityUltra})'),
             ],
           ),
         )).toList(),
@@ -249,11 +254,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   void _pickFps(AppSettings settings) {
+    final l10n = AppLocalizations.of(context)!;
     const options = [15, 24, 30, 60];
     showDialog(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('Frame Rate'),
+        title: Text(l10n.settingsFrameRate),
         children: options.map((v) => SimpleDialogOption(
           onPressed: () {
             ref.read(settingsProvider.notifier).setFps(v);
@@ -264,7 +270,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               Icon(settings.fps == v ? Icons.radio_button_checked : Icons.radio_button_unchecked,
                   size: 20),
               const SizedBox(width: 12),
-              Text('$v FPS${v == 60 ? ' (may increase CPU)' : ''}'),
+              Text('$v FPS${v == 60 ? ' ${l10n.settingsFpsCpuNote}' : ''}'),
             ],
           ),
         )).toList(),
@@ -273,27 +279,28 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   void _editDisplayName(AppSettings settings) {
+    final l10n = AppLocalizations.of(context)!;
     _nameController.text = settings.displayName;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Display Name'),
+        title: Text(l10n.settingsDisplayName),
         content: TextField(
           controller: _nameController,
           autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Enter a name others will see',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            hintText: l10n.settingsNameHint,
+            border: const OutlineInputBorder(),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.commonCancel)),
           FilledButton(
             onPressed: () {
               ref.read(settingsProvider.notifier).setDisplayName(_nameController.text.trim());
               Navigator.pop(ctx);
             },
-            child: const Text('Save'),
+            child: Text(l10n.commonSave),
           ),
         ],
       ),
@@ -301,22 +308,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   void _editPort(AppSettings settings) {
+    final l10n = AppLocalizations.of(context)!;
     _portController.text = settings.serverPort.toString();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('QUIC Server Port'),
+        title: Text(l10n.settingsPort),
         content: TextField(
           controller: _portController,
           autofocus: true,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            hintText: 'Port number (1024-65535)',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            hintText: l10n.settingsPortHint,
+            border: const OutlineInputBorder(),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.commonCancel)),
           FilledButton(
             onPressed: () {
               final port = int.tryParse(_portController.text.trim());
@@ -325,7 +333,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 Navigator.pop(ctx);
               }
             },
-            child: const Text('Save'),
+            child: Text(l10n.commonSave),
           ),
         ],
       ),
