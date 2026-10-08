@@ -10,8 +10,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
     MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
-    MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_BACK, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_PACKET,
-    VK_RETURN, VK_RIGHT, VK_TAB, VK_UP,
+    MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_APPS, VK_BACK, VK_CAPITAL, VK_DELETE, VK_DOWN, VK_END,
+    VK_ESCAPE, VK_HOME, VK_INSERT, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_NEXT,
+    VK_NUMLOCK, VK_PACKET, VK_PAUSE, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU,
+    VK_RSHIFT, VK_RWIN, VK_SCROLL, VK_SNAPSHOT, VK_SPACE, VK_TAB, VK_UP,
 };
 
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -132,6 +134,27 @@ fn key_code_to_vk(key: &KeyCode) -> Option<VIRTUAL_KEY> {
         KeyCode::ArrowDown => Some(VK_DOWN),
         KeyCode::ArrowLeft => Some(VK_LEFT),
         KeyCode::ArrowRight => Some(VK_RIGHT),
+        KeyCode::Space => Some(VK_SPACE),
+        KeyCode::Home => Some(VK_HOME),
+        KeyCode::End => Some(VK_END),
+        KeyCode::PageUp => Some(VK_PRIOR),
+        KeyCode::PageDown => Some(VK_NEXT),
+        KeyCode::Insert => Some(VK_INSERT),
+        KeyCode::PrintScreen => Some(VK_SNAPSHOT),
+        KeyCode::Pause => Some(VK_PAUSE),
+        KeyCode::CapsLock => Some(VK_CAPITAL),
+        KeyCode::NumLock => Some(VK_NUMLOCK),
+        KeyCode::ScrollLock => Some(VK_SCROLL),
+        KeyCode::Menu => Some(VK_APPS),
+        // Distinct left/right VKs keep combos like Ctrl+Shift+Esc accurate.
+        KeyCode::LeftCtrl => Some(VK_LCONTROL),
+        KeyCode::LeftShift => Some(VK_LSHIFT),
+        KeyCode::LeftAlt => Some(VK_LMENU),
+        KeyCode::LeftMeta => Some(VK_LWIN),
+        KeyCode::RightCtrl => Some(VK_RCONTROL),
+        KeyCode::RightShift => Some(VK_RSHIFT),
+        KeyCode::RightAlt => Some(VK_RMENU),
+        KeyCode::RightMeta => Some(VK_RWIN),
         KeyCode::Function(n) => {
             // VK_F1 (0x70) through VK_F24 (0x87)
             if *n >= 1 && *n <= 24 {
@@ -335,6 +358,36 @@ mod tests {
         );
         assert_eq!(key_code_to_vk(&KeyCode::Function(0)), None);
         assert_eq!(key_code_to_vk(&KeyCode::Function(25)), None);
+    }
+
+    #[test]
+    fn test_navigation_key_mapping() {
+        assert_eq!(key_code_to_vk(&KeyCode::Space), Some(VK_SPACE));
+        assert_eq!(key_code_to_vk(&KeyCode::Home), Some(VK_HOME));
+        assert_eq!(key_code_to_vk(&KeyCode::End), Some(VK_END));
+        assert_eq!(key_code_to_vk(&KeyCode::PageUp), Some(VK_PRIOR));
+        assert_eq!(key_code_to_vk(&KeyCode::PageDown), Some(VK_NEXT));
+        assert_eq!(key_code_to_vk(&KeyCode::Insert), Some(VK_INSERT));
+        assert_eq!(key_code_to_vk(&KeyCode::PrintScreen), Some(VK_SNAPSHOT));
+        assert_eq!(key_code_to_vk(&KeyCode::Pause), Some(VK_PAUSE));
+        assert_eq!(key_code_to_vk(&KeyCode::CapsLock), Some(VK_CAPITAL));
+        assert_eq!(key_code_to_vk(&KeyCode::NumLock), Some(VK_NUMLOCK));
+        assert_eq!(key_code_to_vk(&KeyCode::ScrollLock), Some(VK_SCROLL));
+        assert_eq!(key_code_to_vk(&KeyCode::Menu), Some(VK_APPS));
+    }
+
+    #[test]
+    fn test_modifier_key_mapping() {
+        // Distinct left/right VK codes are what make combos like
+        // Ctrl+Shift+Esc survive the round trip.
+        assert_eq!(key_code_to_vk(&KeyCode::LeftCtrl), Some(VK_LCONTROL));
+        assert_eq!(key_code_to_vk(&KeyCode::RightCtrl), Some(VK_RCONTROL));
+        assert_eq!(key_code_to_vk(&KeyCode::LeftShift), Some(VK_LSHIFT));
+        assert_eq!(key_code_to_vk(&KeyCode::RightShift), Some(VK_RSHIFT));
+        assert_eq!(key_code_to_vk(&KeyCode::LeftAlt), Some(VK_LMENU));
+        assert_eq!(key_code_to_vk(&KeyCode::RightAlt), Some(VK_RMENU));
+        assert_eq!(key_code_to_vk(&KeyCode::LeftMeta), Some(VK_LWIN));
+        assert_eq!(key_code_to_vk(&KeyCode::RightMeta), Some(VK_RWIN));
     }
 
     #[test]

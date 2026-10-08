@@ -13,6 +13,7 @@ cfg-if = { workspace = true }
 bytes = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+tokio = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
@@ -25,9 +26,6 @@ windows = { version = "0.58", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
-core-foundation = "0.10"
-objc = "0.2"
-objc-foundation = "0.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
 tokio = { workspace = true }

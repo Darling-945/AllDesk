@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:io' show Platform;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../l10n/app_localizations.dart';
+import '../../services/key_mapping.dart';
 import '../../src/rust/api.dart' as rust_api;
 import 'touch_gesture_handler.dart';
 
@@ -31,6 +32,14 @@ class _RemotePageState extends ConsumerState<RemotePage> {
   String _connectionStatus = '';
   bool _recording = false;
 
+  /// Receives hardware keyboard events for forwarding to the remote.
+  final _keyboardFocus = FocusNode(debugLabel: 'remote-keyboard');
+  /// Mobile soft-keyboard input bar (desktop keyboards go through
+  /// [_keyboardFocus] directly).
+  final _softInputController = TextEditingController();
+  String _lastSoftInput = '';
+  bool _showInputBar = false;
+
   @override
   void initState() {
     super.initState();
@@ -39,6 +48,8 @@ class _RemotePageState extends ConsumerState<RemotePage> {
 
   @override
   void dispose() {
+    _keyboardFocus.dispose();
+    _softInputController.dispose();
     _frameSub?.cancel();
     _statusTimer?.cancel();
     _disconnect();
@@ -53,6 +64,7 @@ class _RemotePageState extends ConsumerState<RemotePage> {
         setState(() => _connecting = false);
         _startFrameStream();
         _startStatusPolling();
+        _requestKeyboardFocus();
       }
     } catch (e) {
       if (mounted) {
@@ -62,6 +74,86 @@ class _RemotePageState extends ConsumerState<RemotePage> {
         });
       }
     }
+  }
+
+  void _requestKeyboardFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_showInputBar) _keyboardFocus.requestFocus();
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // Keyboard forwarding
+  // --------------------------------------------------------------------------
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    final pressed = event is KeyDownEvent || event is KeyRepeatEvent;
+    if (!pressed && event is! KeyUpEvent) return KeyEventResult.ignored;
+
+    // Control keys and modifiers go by protocol code; printable text goes
+    // as Unicode chars. With Ctrl/Meta held the character is a control
+    // code, so letters fall through to the raw-VK path for shortcuts like
+    // Ctrl+C (the host injects the real virtual key).
+    final code = specialCodeFor(event.logicalKey);
+    if (code != null) {
+      _sendKey('special', code, pressed);
+      return KeyEventResult.handled;
+    }
+
+    final combo = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+
+    if (combo) {
+      final vk = vkForCombo(event.logicalKey);
+      if (vk != null) {
+        _sendKey('vk', vk, pressed);
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    if (pressed) {
+      final ch = event.character;
+      if (ch != null && isPrintableText(ch)) {
+        _sendKey('char', ch.runes.first, true);
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _sendKey(String keyType, int key, bool pressed) {
+    rust_api.sendKeyEvent(keyType: keyType, key: key, pressed: pressed)
+        .catchError((_) {});
+  }
+
+  /// Mobile soft keyboard: forward appended characters as char events and
+  /// deletions as Backspace presses.
+  void _onSoftInputChanged(String text) {
+    if (text.length > _lastSoftInput.length) {
+      final appended = text.substring(_lastSoftInput.length);
+      for (final rune in appended.runes) {
+        _sendKey('char', rune, true);
+      }
+    } else if (text.length < _lastSoftInput.length) {
+      for (var i = text.length; i < _lastSoftInput.length; i++) {
+        _sendKey('special', kKeyBackspace, true);
+      }
+    }
+    _lastSoftInput = text;
+  }
+
+  void _toggleInputBar() {
+    setState(() {
+      _showInputBar = !_showInputBar;
+      if (_showInputBar) {
+        _keyboardFocus.unfocus();
+        _lastSoftInput = '';
+        _softInputController.clear();
+      } else {
+        _requestKeyboardFocus();
+      }
+    });
   }
 
   void _startStatusPolling() {
@@ -131,41 +223,96 @@ class _RemotePageState extends ConsumerState<RemotePage> {
     final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Center(child: _buildContent()),
-          Positioned(
-            top: 8,
-            right: 8,
-            child: _buildToolbar(),
-          ),
-          if (_connecting)
+      // Hardware keyboard: focus is acquired after connecting and re-acquired
+      // whenever the user taps the remote view (toolbar buttons steal it).
+      body: Focus(
+        focusNode: _keyboardFocus,
+        onKeyEvent: _handleKeyEvent,
+        child: Stack(
+          children: [
+            Listener(
+              onPointerDown: (_) {
+                if (!_showInputBar) _keyboardFocus.requestFocus();
+              },
+              child: Center(child: _buildContent()),
+            ),
             Positioned(
               top: 8,
-              left: 8,
-              child: Card(
-                color: Colors.black87,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        l10n.remoteConnectingTo(widget.peerId),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white),
-                      ),
-                    ],
+              right: 8,
+              child: _buildToolbar(),
+            ),
+            if (_showInputBar) _buildInputBar(l10n),
+            if (_connecting)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Card(
+                  color: Colors.black87,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          l10n.remoteConnectingTo(widget.peerId),
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Mobile input bar: pops the soft keyboard and forwards edits to the
+  /// remote as char/backspace events.
+  Widget _buildInputBar(AppLocalizations l10n) {
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        color: Colors.black87,
+        child: SafeArea(
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _softInputController,
+                  autofocus: true,
+                  onChanged: _onSoftInputChanged,
+                  onSubmitted: (_) {
+                    _sendKey('special', kKeyEnter, true);
+                    _softInputController.clear();
+                    _lastSoftInput = '';
+                  },
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: l10n.remoteInputHint,
+                    hintStyle: const TextStyle(color: Colors.white38),
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.keyboard_hide, color: Colors.white),
+                tooltip: l10n.remoteKeyboard,
+                onPressed: _toggleInputBar,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -250,6 +397,14 @@ class _RemotePageState extends ConsumerState<RemotePage> {
                 style: const TextStyle(color: Colors.white54, fontSize: 11),
               ),
             ),
+          IconButton(
+            icon: Icon(
+              _showInputBar ? Icons.keyboard_hide : Icons.keyboard,
+              color: Colors.white,
+            ),
+            onPressed: _toggleInputBar,
+            tooltip: l10n.remoteKeyboard,
+          ),
           IconButton(
             icon: const Icon(Icons.chat, color: Colors.white),
             onPressed: () => context.go('/chat'),

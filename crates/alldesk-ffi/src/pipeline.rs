@@ -15,6 +15,9 @@ use alldesk_capture::dxgi::DxgiCapturer;
 #[cfg(target_os = "android")]
 use alldesk_capture::android::AndroidCapturer;
 
+#[cfg(target_os = "macos")]
+use alldesk_capture::quartz::QuartzCapturer;
+
 use alldesk_codec::decoder::VideoDecoder;
 use alldesk_codec::encoder::{Codec, EncodedPacket, VideoEncoder};
 use alldesk_codec::vp9::{Vp9Decoder, Vp9Encoder};
@@ -54,6 +57,10 @@ unsafe impl Send for SenderPipeline {}
 /// and logging a warning per frame — long after the viewer disconnected.
 const MAX_CONSECUTIVE_SEND_ERRORS: u32 = 60;
 
+/// Rebuild the encoder after this many consecutive encode failures (~1 s at
+/// 30 fps) instead of streaming raw BGRA indefinitely.
+const MAX_CONSECUTIVE_ENCODE_ERRORS: u32 = 30;
+
 impl SenderPipeline {
     pub async fn new(transport: QuicTransport, bitrate_kbps: u32, fps: u32) -> Result<Self> {
         #[cfg(target_os = "windows")]
@@ -62,7 +69,10 @@ impl SenderPipeline {
         #[cfg(target_os = "android")]
         let mut capturer: Box<dyn CaptureProvider> = Box::new(AndroidCapturer::new());
 
-        #[cfg(not(any(target_os = "windows", target_os = "android")))]
+        #[cfg(target_os = "macos")]
+        let mut capturer: Box<dyn CaptureProvider> = Box::new(QuartzCapturer::new());
+
+        #[cfg(not(any(target_os = "windows", target_os = "android", target_os = "macos")))]
         let mut capturer: Box<dyn CaptureProvider> = {
             return Err(alldesk_core::Error::Capture("no capture backend".into()));
         };
@@ -175,6 +185,7 @@ impl SenderPipeline {
     pub async fn run(&mut self) -> Result<()> {
         let mut consecutive_errors = 0u32;
         let mut consecutive_send_errors = 0u32;
+        let mut consecutive_encode_errors = 0u32;
         // Fixed-rate scheduler over sleep_until instead of tokio::time::interval:
         // the period must follow the adaptive FPS, and Interval's period
         // can't be changed after creation.
@@ -208,9 +219,17 @@ impl SenderPipeline {
                 Ok(Some(frame)) => {
                     consecutive_errors = 0;
 
+                    // Resolution changes (display mode switch, DXGI reinit
+                    // picking another monitor) arrive as frames whose size
+                    // no longer matches the encoder — rebuild before use.
+                    self.ensure_encoder_matches(&frame);
+
+                    let mut encoded = false;
                     if let Some(ref mut encoder) = self.encoder {
                         match encoder.encode(&frame) {
                             Ok(packets) => {
+                                encoded = true;
+                                consecutive_encode_errors = 0;
                                 for pkt in packets {
                                     if let Err(e) = self.send_vpx_frame(&frame, &pkt).await {
                                         tracing::warn!("send vp9: {}", e);
@@ -222,12 +241,23 @@ impl SenderPipeline {
                                         consecutive_send_errors = 0;
                                     }
                                 }
-                                continue;
                             }
                             Err(e) => {
+                                consecutive_encode_errors += 1;
                                 tracing::warn!("VP9 encode error, sending raw: {}", e);
+                                // A persistently failing encoder is rebuilt at
+                                // the current frame size instead of falling
+                                // back to raw forever — raw BGRA would flood
+                                // the stream (~8 MB/frame at 1080p).
+                                if consecutive_encode_errors >= MAX_CONSECUTIVE_ENCODE_ERRORS {
+                                    self.rebuild_encoder(&frame);
+                                    consecutive_encode_errors = 0;
+                                }
                             }
                         }
+                    }
+                    if encoded {
+                        continue;
                     }
                     match self.send_raw_frame(&frame).await {
                         Ok(()) => consecutive_send_errors = 0,
@@ -250,6 +280,40 @@ impl SenderPipeline {
                 }
             }
         }
+    }
+
+    /// Rebuild the encoder when the capture resolution no longer matches it
+    /// (no-op while sizes agree). Also retries creation after an init
+    /// failure once a frame with different dimensions shows up.
+    fn ensure_encoder_matches(&mut self, frame: &CapturedFrame) {
+        let matches = self
+            .encoder
+            .as_ref()
+            .is_some_and(|e| e.width() == frame.width && e.height() == frame.height);
+        if !matches {
+            self.rebuild_encoder(frame);
+        }
+    }
+
+    /// (Re)create the VP9 encoder at the frame's size. A fresh encoder also
+    /// emits a keyframe first, so the receiver resynchronizes immediately.
+    /// The flow-controller ceiling must follow the capture size for both the
+    /// VP9 path and the raw fallback.
+    fn rebuild_encoder(&mut self, frame: &CapturedFrame) {
+        let old = self
+            .encoder
+            .as_ref()
+            .map(|e| (e.width(), e.height()))
+            .unwrap_or((0, 0));
+        tracing::warn!(
+            "rebuilding VP9 encoder for {}x{} (was {}x{})",
+            frame.width,
+            frame.height,
+            old.0,
+            old.1
+        );
+        self.encoder = Vp9Encoder::new(frame.width, frame.height, self.bitrate_kbps, self.fps).ok();
+        self.flow = Self::build_flow(frame.width, frame.height);
     }
 
     async fn send_vpx_frame(&mut self, frame: &CapturedFrame, pkt: &EncodedPacket) -> Result<()> {

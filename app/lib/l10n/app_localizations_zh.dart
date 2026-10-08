@@ -125,6 +125,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get remoteDisconnect => '断开连接';
 
   @override
+  String get remoteKeyboard => '键盘';
+
+  @override
+  String get remoteInputHint => '输入要发送到远程的文本…';
+
+  @override
   String get remoteStartRecording => '录制会话';
 
   @override

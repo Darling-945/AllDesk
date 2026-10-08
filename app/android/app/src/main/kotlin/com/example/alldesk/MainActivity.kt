@@ -40,6 +40,11 @@ class MainActivity : FlutterActivity() {
                     "isAccessibilityEnabled" -> {
                         result.success(isAccessibilityServiceEnabled())
                     }
+                    "isScreenCaptureGranted" -> {
+                        // True while the MediaProjection foreground service
+                        // is capturing (flag cleared in stopCapture/onDestroy).
+                        result.success(ScreenCaptureService.isRunning)
+                    }
                     "openAccessibilitySettings" -> {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                         result.success(null)

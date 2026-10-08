@@ -14,7 +14,9 @@ set -e
 TARGET="${1:-windows}"
 
 export VPX_LIB_DIR="${VPX_LIB_DIR:-/tmp/vpx-install/lib}"
-export VPX_VERSION="${VPX_VERSION:-1.13.0}"
+# Must match the libvpx runtime in VPX_LIB_DIR (libvpx-native-sys pregenerated
+# bindings; 1.14.0 bindings match a 1.14.x runtime).
+export VPX_VERSION="${VPX_VERSION:-1.14.0}"
 export VPX_INCLUDE_DIR="${VPX_INCLUDE_DIR:-/tmp/vpx-install/include}"
 
 case "$TARGET" in
@@ -40,28 +42,36 @@ case "$TARGET" in
     ;;
 
   android|android-debug)
-    export ANDROID_HOME="${ANDROID_HOME:-E:/Program Files/Android/Sdk}"
-    export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/26.1.10909125}"
-    export JAVA_HOME="${JAVA_HOME:-E:/Program Files/jdk-21.0.6+7}"
-    export PATH="/c/Program Files/CMake/bin:$VPX_LIB_DIR:$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+    export ANDROID_HOME="${ANDROID_HOME:-E:/AndroidSdk}"
+    export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-E:/AndroidSdk/ndk/28.2.13676358}"
+    export JAVA_HOME="${JAVA_HOME:-C:/Program Files/Microsoft/jdk-21.0.10.7-hotspot}"
+    export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 
     PROFILE="release"
     [ "$TARGET" = "android-debug" ] && PROFILE="debug"
 
     echo "=== [1/4] Building Rust FFI for Android ($PROFILE) ==="
-    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 build -p alldesk-ffi $([ "$PROFILE" = "release" ] && echo --release)
-
-    echo "=== [2/4] Copying .so to jniLibs ==="
+    # Each ABI links its own statically cross-compiled libvpx (built with
+    # scripts/build-vpx-android.sh once per ABI; output in /c/tmp/vpx-android).
+    export VPX_STATIC=1 VPX_VERSION=1.14.0
     JNI_DIR="app/android/app/src/main/jniLibs"
     mkdir -p "$JNI_DIR/arm64-v8a" "$JNI_DIR/armeabi-v7a" "$JNI_DIR/x86_64"
-    cp "target/aarch64-linux-android/$PROFILE/liballdesk_ffi.so" "$JNI_DIR/arm64-v8a/"
-    cp "target/armv7-linux-androideabi/$PROFILE/liballdesk_ffi.so" "$JNI_DIR/armeabi-v7a/"
-    cp "target/x86_64-linux-android/$PROFILE/liballdesk_ffi.so" "$JNI_DIR/x86_64/"
+    for pair in aarch64-linux-android:arm64-v8a \
+                armv7-linux-androideabi:armeabi-v7a \
+                x86_64-linux-android:x86_64; do
+      rust_target=${pair%%:*}; abi=${pair##*:}
+      echo "--- target $rust_target ($abi) ---"
+      export VPX_LIB_DIR="/c/tmp/vpx-android/$abi/lib"
+      export VPX_INCLUDE_DIR="/c/tmp/vpx-android/$abi/include"
+      # Platform 26: cpal's aaudio backend needs API 26+.
+      cargo ndk --platform 26 -t "$rust_target" build -p alldesk-ffi $([ "$PROFILE" = "release" ] && echo --release)
+      cp "target/$rust_target/$PROFILE/liballdesk_ffi.so" "$JNI_DIR/$abi/"
+    done
 
-    echo "=== [3/4] Generating Flutter-Rust bindings ==="
+    echo "=== [2/4] Generating Flutter-Rust bindings ==="
     flutter_rust_bridge_codegen generate
 
-    echo "=== [4/4] Flutter build/install ==="
+    echo "=== [3/4] Flutter build/install ==="
     cd app
     if [ "$TARGET" = "android-debug" ]; then
         flutter install --debug ${2:+-d "$2"}

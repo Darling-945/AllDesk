@@ -39,6 +39,8 @@ pub struct DxgiCapturer {
     /// Output width and height extracted from DXGI_OUTPUT_DESC at start_capture.
     output_width: u32,
     output_height: u32,
+    /// Output origin in desktop coordinates (for the GDI first-frame fallback).
+    output_origin: (i32, i32),
     config: Option<CaptureConfig>,
     /// Instant used to compute frame timestamps relative to capture start.
     start_instant: Option<Instant>,
@@ -50,6 +52,11 @@ pub struct DxgiCapturer {
     staging_dims: (u32, u32),
     /// Number of consecutive reinit attempts to avoid infinite loops.
     reinit_attempts: u32,
+    /// Whether any frame has been produced yet. On a quiet desktop,
+    /// AcquireNextFrame waits for the first *change* and never returns the
+    /// current image — the first frame is taken via a one-shot GDI BitBlt
+    /// fallback so a newly connected viewer immediately sees the desktop.
+    produced_frame: bool,
 }
 
 // COM interfaces are thread-safe via reference counting and the DXGI/D3D11 runtime
@@ -71,12 +78,14 @@ impl DxgiCapturer {
             duplication: None,
             output_width: 0,
             output_height: 0,
+            output_origin: (0, 0),
             config: None,
             start_instant: None,
             needs_reinit: false,
             staging_texture: None,
             staging_dims: (0, 0),
             reinit_attempts: 0,
+            produced_frame: false,
         }
     }
 
@@ -344,6 +353,40 @@ fn wide_string<const N: usize>(buf: &[u16; N]) -> String {
     String::from_utf16_lossy(&buf[..end])
 }
 
+impl DxgiCapturer {
+    /// One-shot GDI fallback for the first frame on a quiet desktop (see the
+    /// WAIT_TIMEOUT branch in next_frame). BitBlt always returns the current
+    /// desktop content; the result intentionally skips cursor/dirty-rect
+    /// metadata — the next real DXGI frame carries those.
+    fn gdi_first_frame(&mut self) -> Result<Option<CapturedFrame>> {
+        let width = self.output_width;
+        let height = self.output_height;
+        if width == 0 || height == 0 {
+            return Ok(None);
+        }
+
+        let pixels = unsafe { gdi_capture_desktop(self.output_origin, width, height)? };
+        self.produced_frame = true;
+        let timestamp = self
+            .start_instant
+            .map(|i| i.elapsed())
+            .unwrap_or(Duration::ZERO);
+        let monitor_id = self.config.as_ref().map(|c| c.monitor_id).unwrap_or(0);
+
+        info!("first frame via GDI fallback ({}x{})", width, height);
+        Ok(Some(CapturedFrame {
+            data: FrameData::Cpu(pixels),
+            width,
+            height,
+            format: PixelFormat::Bgra8888,
+            damage_regions: Vec::new(),
+            timestamp,
+            monitor_id,
+            cursor: None,
+        }))
+    }
+}
+
 #[async_trait::async_trait]
 impl CaptureProvider for DxgiCapturer {
     async fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
@@ -434,6 +477,7 @@ impl CaptureProvider for DxgiCapturer {
         let desktop_rect = desc.DesktopCoordinates;
         self.output_width = (desktop_rect.right - desktop_rect.left) as u32;
         self.output_height = (desktop_rect.bottom - desktop_rect.top) as u32;
+        self.output_origin = (desktop_rect.left, desktop_rect.top);
 
         // Create the desktop duplication.
         let device = self.device.as_ref().unwrap();
@@ -444,6 +488,7 @@ impl CaptureProvider for DxgiCapturer {
         self.start_instant = Some(Instant::now());
         self.needs_reinit = false;
         self.reinit_attempts = 0;
+        self.produced_frame = false;
 
         // Note: capture rate is NOT limited here. The sender pipeline paces
         // next_frame() calls; a second, independent rate limiter inside the
@@ -470,12 +515,14 @@ impl CaptureProvider for DxgiCapturer {
         self.device = None;
         self.output_width = 0;
         self.output_height = 0;
+        self.output_origin = (0, 0);
         self.start_instant = None;
         self.config = None;
         self.needs_reinit = false;
         self.staging_texture = None;
         self.staging_dims = (0, 0);
         self.reinit_attempts = 0;
+        self.produced_frame = false;
 
         Ok(())
     }
@@ -540,7 +587,16 @@ impl CaptureProvider for DxgiCapturer {
         match acquire_result {
             Ok(()) => {}
             Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
-                // No new frame available yet.
+                // No *change* yet. On a quiet desktop AcquireNextFrame never
+                // returns the current image (not even on the first call or
+                // after recreating the duplication), so a freshly connected
+                // viewer would stare at nothing until someone touches the
+                // host. Bridge that gap once with a GDI BitBlt of the
+                // current desktop; DXGI takes over as soon as a real change
+                // arrives.
+                if !self.produced_frame {
+                    return self.gdi_first_frame();
+                }
                 return Ok(None);
             }
             Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
@@ -685,6 +741,7 @@ impl CaptureProvider for DxgiCapturer {
         let cursor = extract_cursor_info(&duplication, &frame_info, show_cursor);
 
         self.reinit_attempts = 0;
+        self.produced_frame = true;
 
         let monitor_id = self.config.as_ref().map(|c| c.monitor_id).unwrap_or(0);
 
@@ -699,4 +756,112 @@ impl CaptureProvider for DxgiCapturer {
             cursor,
         }))
     }
+}
+
+/// Grab the current desktop content of the given rect via GDI BitBlt,
+/// returning tightly-packed top-down BGRA pixels.
+unsafe fn gdi_capture_desktop(origin: (i32, i32), width: u32, height: u32) -> Result<Vec<u8>> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT,
+        DIB_RGB_COLORS, HDC, HGDIOBJ, SRCCOPY,
+    };
+
+    let null_hwnd = HWND::default();
+    let screen_dc = GetDC(null_hwnd);
+    if screen_dc.is_invalid() {
+        return Err(Error::Capture("GDI GetDC failed".into()));
+    }
+    // Ensure the screen DC is released on every exit path below.
+    struct DcGuard(HDC);
+    impl Drop for DcGuard {
+        fn drop(&mut self) {
+            unsafe { ReleaseDC(HWND::default(), self.0) };
+        }
+    }
+    let _screen_guard = DcGuard(screen_dc);
+
+    let mem_dc = CreateCompatibleDC(screen_dc);
+    if mem_dc.is_invalid() {
+        return Err(Error::Capture("GDI CreateCompatibleDC failed".into()));
+    }
+    struct MemDcGuard(HDC);
+    impl Drop for MemDcGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DeleteDC(self.0);
+            }
+        }
+    }
+    let _mem_guard = MemDcGuard(mem_dc);
+
+    let bitmap = CreateCompatibleBitmap(screen_dc, width as i32, height as i32);
+    if bitmap.is_invalid() {
+        return Err(Error::Capture("GDI CreateCompatibleBitmap failed".into()));
+    }
+    struct BmpGuard(HGDIOBJ);
+    impl Drop for BmpGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DeleteObject(self.0);
+            }
+        }
+    }
+    let _bmp_guard = BmpGuard(HGDIOBJ(bitmap.0));
+
+    let old_obj = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
+    struct SelGuard((HDC, HGDIOBJ));
+    impl Drop for SelGuard {
+        fn drop(&mut self) {
+            unsafe { SelectObject(self.0 .0, self.0 .1) };
+        }
+    }
+    let _sel_guard = SelGuard((mem_dc, old_obj));
+
+    let blit = BitBlt(
+        mem_dc,
+        0,
+        0,
+        width as i32,
+        height as i32,
+        screen_dc,
+        origin.0,
+        origin.1,
+        SRCCOPY | CAPTUREBLT,
+    );
+    if blit.is_err() {
+        return Err(Error::Capture("GDI BitBlt failed".into()));
+    }
+
+    // Top-down 32bpp: negative height → rows in top-down order, BGRA packed.
+    let mut info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width as i32,
+            biHeight: -(height as i32),
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut pixels = vec![0u8; width as usize * height as usize * 4];
+    let lines = GetDIBits(
+        mem_dc,
+        bitmap,
+        0,
+        height,
+        Some(pixels.as_mut_ptr().cast()),
+        &mut info,
+        DIB_RGB_COLORS,
+    );
+    if lines != height as i32 {
+        return Err(Error::Capture(format!(
+            "GDI GetDIBits copied {lines}/{} rows",
+            height
+        )));
+    }
+    Ok(pixels)
 }

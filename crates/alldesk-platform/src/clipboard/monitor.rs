@@ -58,7 +58,6 @@ impl ClipboardContent {
 pub struct ClipboardMonitor {
     clipboard: arboard::Clipboard,
     last_hash: u64,
-    last_content: Option<ClipboardContent>,
     /// Sequence number at the last observed change (Windows fast path).
     #[cfg(target_os = "windows")]
     last_seq: u32,
@@ -76,7 +75,6 @@ impl ClipboardMonitor {
         let mut monitor = Self {
             clipboard,
             last_hash: 0,
-            last_content: None,
             #[cfg(target_os = "windows")]
             last_seq: 0,
         };
@@ -91,7 +89,6 @@ impl ClipboardMonitor {
         }
         if let Ok(content) = monitor.read_clipboard() {
             monitor.last_hash = content.content_hash();
-            monitor.last_content = Some(content);
         }
 
         Ok(monitor)
@@ -114,7 +111,6 @@ impl ClipboardMonitor {
                 let hash = content.content_hash();
                 if hash != self.last_hash {
                     self.last_hash = hash;
-                    self.last_content = Some(content);
                     true
                 } else {
                     // Sequence moved but content hashes equal (e.g. an app
@@ -136,7 +132,6 @@ impl ClipboardMonitor {
                 let hash = content.content_hash();
                 if hash != self.last_hash {
                     self.last_hash = hash;
-                    self.last_content = Some(content);
                     true
                 } else {
                     false
@@ -155,7 +150,6 @@ impl ClipboardMonitor {
         match self.read_clipboard() {
             Ok(content) => {
                 self.last_hash = content.content_hash();
-                self.last_content = Some(content.clone());
                 // We now know the current content — fold any pending
                 // sequence bump into "seen" so has_changed() stays quiet.
                 #[cfg(target_os = "windows")]
@@ -195,7 +189,6 @@ impl ClipboardMonitor {
         // Update cached state so has_changed() won't immediately fire. Our
         // own write bumps the OS sequence number — absorb it here too.
         self.last_hash = content.content_hash();
-        self.last_content = Some(content.clone());
         #[cfg(target_os = "windows")]
         {
             self.last_seq = clipboard_sequence();

@@ -314,6 +314,18 @@ abstract class AppLocalizations {
   /// **'断开连接'**
   String get remoteDisconnect;
 
+  /// No description provided for @remoteKeyboard.
+  ///
+  /// In zh, this message translates to:
+  /// **'键盘'**
+  String get remoteKeyboard;
+
+  /// No description provided for @remoteInputHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入要发送到远程的文本…'**
+  String get remoteInputHint;
+
   /// No description provided for @remoteStartRecording.
   ///
   /// In zh, this message translates to:

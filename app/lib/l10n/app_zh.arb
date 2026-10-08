@@ -44,6 +44,8 @@
   "remoteFileTransfer": "文件传输",
   "remoteChat": "聊天",
   "remoteDisconnect": "断开连接",
+  "remoteKeyboard": "键盘",
+  "remoteInputHint": "输入要发送到远程的文本…",
   "remoteStartRecording": "录制会话",
   "remoteStopRecording": "停止录制",
   "remoteRecordingDone": "录制完成: {summary}",

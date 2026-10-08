@@ -245,6 +245,16 @@ impl Vp9Encoder {
             Err(e) => tracing::warn!("VP9 reconfigure: {}", e),
         }
     }
+
+    /// Encoded picture width (may differ from the incoming frame size after
+    /// a resolution change — callers use this to detect a needed rebuild).
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 }
 
 impl VideoEncoder for Vp9Encoder {
@@ -496,6 +506,35 @@ mod tests {
     fn test_vp9_encoder_new() {
         let enc = Vp9Encoder::new(320, 240, 500, 30);
         assert!(enc.is_ok(), "Vp9Encoder::new failed: {:?}", enc.err());
+    }
+
+    /// Runtime sanity probe: the linked libvpx must match the pregenerated
+    /// bindings (VPX_VERSION). Prints the DLL's version and isolates which
+    /// init call fails when something is off.
+    #[test]
+    fn test_vpx_runtime_matches_bindings() {
+        unsafe extern "C" {
+            fn vpx_codec_version() -> i32;
+            fn vpx_codec_version_str() -> *const std::os::raw::c_char;
+        }
+        unsafe {
+            let v = vpx_codec_version();
+            let ver = format!("{}.{}.{}", (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
+            eprintln!(
+                "libvpx runtime: {ver} ({})",
+                std::ffi::CStr::from_ptr(vpx_codec_version_str()).to_string_lossy()
+            );
+
+            let iface = vpx_codec_vp9_cx();
+            assert!(!iface.is_null(), "vpx_codec_vp9_cx returned null");
+            let mut cfg: vpx_codec_enc_cfg_t = MaybeUninit::zeroed().assume_init();
+            let r1 = vpx_codec_enc_config_default(iface, &mut cfg, 0);
+            assert_eq!(r1 as i32, 0, "enc_config_default failed");
+
+            let mut ctx: vpx_codec_ctx_t = MaybeUninit::zeroed().assume_init();
+            let r2 = vpx_codec_enc_init_ver(&mut ctx, iface, &cfg, 0, VPX_ENCODER_ABI_VERSION as _);
+            assert_eq!(r2 as i32, 0, "enc_init_ver failed with code {}", r2 as i32);
+        }
     }
 
     #[test]

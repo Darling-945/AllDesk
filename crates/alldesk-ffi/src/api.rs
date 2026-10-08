@@ -995,6 +995,75 @@ async fn record_pipeline_error(msg: String) {
     app_state().write().await.last_pipeline_error = Some(msg);
 }
 
+/// Wraps an [`InputController`] so absolute mouse coordinates arriving in
+/// captured-frame *pixels* are translated into macOS global display
+/// *points* (origin offset + Retina scale). Everything else delegates.
+#[cfg(target_os = "macos")]
+struct PointScaledController<C: alldesk_platform::input::InputController> {
+    inner: C,
+    origin: (f64, f64),
+    scale: (f64, f64),
+}
+
+#[cfg(target_os = "macos")]
+impl<C: alldesk_platform::input::InputController> PointScaledController<C> {
+    fn new(inner: C, origin: (f64, f64), scale: (f64, f64)) -> Self {
+        Self {
+            inner,
+            origin,
+            scale,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl<C: alldesk_platform::input::InputController> alldesk_platform::input::InputController
+    for PointScaledController<C>
+{
+    fn mouse_move(
+        &self,
+        x: i32,
+        y: i32,
+        relative: bool,
+    ) -> std::result::Result<(), alldesk_core::error::Error> {
+        if relative {
+            return self.inner.mouse_move(x, y, true);
+        }
+        let px = self.origin.0 + x as f64 * self.scale.0;
+        let py = self.origin.1 + y as f64 * self.scale.1;
+        self.inner
+            .mouse_move(px.round() as i32, py.round() as i32, false)
+    }
+
+    fn mouse_click(
+        &self,
+        button: alldesk_platform::input::MouseButton,
+        state: alldesk_platform::input::ButtonState,
+    ) -> std::result::Result<(), alldesk_core::error::Error> {
+        self.inner.mouse_click(button, state)
+    }
+
+    fn mouse_scroll(
+        &self,
+        delta_x: i32,
+        delta_y: i32,
+    ) -> std::result::Result<(), alldesk_core::error::Error> {
+        self.inner.mouse_scroll(delta_x, delta_y)
+    }
+
+    fn key_event(
+        &self,
+        key: alldesk_platform::input::KeyCode,
+        state: alldesk_platform::input::KeyState,
+    ) -> std::result::Result<(), alldesk_core::error::Error> {
+        self.inner.key_event(key, state)
+    }
+
+    fn unicode_char(&self, ch: char) -> std::result::Result<(), alldesk_core::error::Error> {
+        self.inner.unicode_char(ch)
+    }
+}
+
 /// Receive input events from the viewer and inject them into the local OS.
 async fn run_input_handler(
     conn: quinn::Connection,
@@ -1016,7 +1085,24 @@ async fn run_input_handler(
     #[cfg(target_os = "windows")]
     let controller = alldesk_platform::input::WindowsInputController::new();
     #[cfg(target_os = "macos")]
-    let controller = alldesk_platform::input::MacInputController::new();
+    let controller = {
+        // Frames are captured in backing-store pixels (2x on Retina), but
+        // CGEvent mouse coordinates are global display *points*. Wrap the
+        // controller with the main display's origin + scale so absolute
+        // clicks land where the viewer sees them. The quartz capturer
+        // sorts the main display first, so capture and input agree.
+        let d = core_graphics::display::CGDisplay::main();
+        let b = d.bounds();
+        let scale = (
+            b.size.width / d.pixels_wide() as f64,
+            b.size.height / d.pixels_high() as f64,
+        );
+        PointScaledController::new(
+            alldesk_platform::input::MacInputController::new(),
+            (b.origin.x, b.origin.y),
+            scale,
+        )
+    };
     #[cfg(target_os = "android")]
     let controller = alldesk_platform::input::AndroidInputController::new();
 
@@ -1108,7 +1194,8 @@ fn handle_scroll_event(controller: &dyn InputController, msg: &[u8]) {
 
 fn handle_key_event(controller: &dyn InputController, msg: &[u8]) {
     // Format: [0x03] [state: u8 0=press 1=release] [key_type: u8] [payload...]
-    // key_type 0x01 = char (4 bytes LE), 0x02 = special key (1 byte enum)
+    // key_type 0x01 = char (4 bytes LE), 0x02 = special key (1 byte code),
+    // 0x03 = raw platform virtual key (4 bytes LE)
     if msg.len() < 4 {
         return;
     }
@@ -1143,10 +1230,23 @@ fn handle_key_event(controller: &dyn InputController, msg: &[u8]) {
                 tracing::warn!("key_event: {}", e);
             }
         }
+        0x03 => {
+            // Raw virtual key passthrough — used for modifier combos
+            // (Ctrl+C etc.) where a text char event would be wrong.
+            if msg.len() < 7 {
+                return;
+            }
+            let vk = u32::from_le_bytes(msg[3..7].try_into().unwrap());
+            if let Err(e) = controller.key_event(KeyCode::Unknown(vk), state) {
+                tracing::warn!("key_event(vk): {}", e);
+            }
+        }
         _ => tracing::warn!("unknown key_type: 0x{:02x}", key_type),
     }
 }
 
+/// Wire code → KeyCode for "special" keys. Keep in sync with the Dart-side
+/// table in app/lib/services/key_mapping.dart (single source: this table).
 fn decode_special_key(code: u8) -> KeyCode {
     match code {
         0x01 => KeyCode::Enter,
@@ -1158,7 +1258,27 @@ fn decode_special_key(code: u8) -> KeyCode {
         0x07 => KeyCode::ArrowDown,
         0x08 => KeyCode::ArrowLeft,
         0x09 => KeyCode::ArrowRight,
-        n if n >= 0x10 => KeyCode::Function(n - 0x10),
+        0x30 => KeyCode::Space,
+        0x31 => KeyCode::Home,
+        0x32 => KeyCode::End,
+        0x33 => KeyCode::PageUp,
+        0x34 => KeyCode::PageDown,
+        0x35 => KeyCode::Insert,
+        0x36 => KeyCode::PrintScreen,
+        0x37 => KeyCode::Pause,
+        0x38 => KeyCode::CapsLock,
+        0x39 => KeyCode::NumLock,
+        0x3A => KeyCode::ScrollLock,
+        0x3B => KeyCode::Menu,
+        0x40 => KeyCode::LeftCtrl,
+        0x41 => KeyCode::LeftShift,
+        0x42 => KeyCode::LeftAlt,
+        0x43 => KeyCode::LeftMeta,
+        0x44 => KeyCode::RightCtrl,
+        0x45 => KeyCode::RightShift,
+        0x46 => KeyCode::RightAlt,
+        0x47 => KeyCode::RightMeta,
+        n if (0x10..=0x27).contains(&n) => KeyCode::Function(n - 0x10),
         _ => KeyCode::Unknown(code as u32),
     }
 }
@@ -1398,9 +1518,18 @@ pub async fn send_scroll(dy: f64) -> Result<(), String> {
 }
 
 /// Send a key event to the remote peer (viewer side).
-/// For char keys: key_type="char", key is the unicode codepoint.
-/// For special keys: key_type="special", key is the special key code.
 /// pressed: true = key down, false = key up.
+///
+/// - key_type="char": `key` is a Unicode codepoint (injected as text;
+///   releases are implicit — the host sends its own down+up pair).
+/// - key_type="special": `key` is a code from the shared table in
+///   [`decode_special_key`] (0x01-0x09 Enter/Esc/Tab/Backspace/Delete/
+///   arrows, 0x10-0x27 F1-F24, 0x30+ navigation keys, 0x40-0x47 the
+///   left/right Ctrl/Shift/Alt/Meta modifiers). Keep the Dart table in
+///   app/lib/services/key_mapping.dart in sync.
+/// - key_type="vk": `key` is a raw Windows virtual-key code, injected
+///   as-is — used for modifier combos (Ctrl+C etc.) where a char event
+///   would be wrong.
 pub async fn send_key_event(key_type: String, key: u32, pressed: bool) -> Result<(), String> {
     let mut msg = Vec::with_capacity(16);
     msg.push(0x03); // input msg type: key
@@ -1414,6 +1543,10 @@ pub async fn send_key_event(key_type: String, key: u32, pressed: bool) -> Result
         "special" => {
             msg.push(0x02); // key_type: special
             msg.push(key as u8);
+        }
+        "vk" => {
+            msg.push(0x03); // key_type: raw virtual key
+            msg.extend_from_slice(&key.to_le_bytes());
         }
         _ => return Err(format!("unknown key_type: {}", key_type)),
     }
@@ -1501,8 +1634,12 @@ const FILE_MSG_HEADER: u8 = 0x01;
 const FILE_MSG_CHUNK: u8 = 0x02;
 const FILE_MSG_END: u8 = 0x03;
 
-/// Where the host stores files received from viewers.
+/// Where the host stores files received from viewers. Override with the
+/// `ALLDESK_RECEIVED_FILES_DIR` environment variable (also used by tests).
 fn received_files_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("ALLDESK_RECEIVED_FILES_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
     let base = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from)
@@ -1534,9 +1671,10 @@ fn sanitize_remote_filename(name: &str) -> String {
 }
 
 /// Host side: receive files pushed by the viewer, writing them to
-/// `<user>/Downloads/AllDesk/`. One task per connection; exits with the
-/// connection.
-async fn run_file_receiver(mut transport: alldesk_net::transport::QuicTransport) {
+/// `<user>/Downloads/AllDesk/` (or `ALLDESK_RECEIVED_FILES_DIR`). One task
+/// per connection; exits with the connection. Public for integration tests.
+#[flutter_rust_bridge::frb(ignore)]
+pub async fn run_file_receiver(mut transport: alldesk_net::transport::QuicTransport) {
     // The viewer may never send a file — wait without a timeout.
     if let Err(e) = transport.accept_channel(Channel::File).await {
         tracing::debug!("file receiver: {}", e);
@@ -1601,8 +1739,13 @@ async fn run_file_receiver(mut transport: alldesk_net::transport::QuicTransport)
                 }
             }
             FILE_MSG_CHUNK => {
+                // Wire layout: [type][index u64][data]. The index is transport
+                // metadata — it must NOT be written into the file body.
+                if msg.len() <= 9 {
+                    continue;
+                }
                 if let Some((_, total, file)) = current.as_mut() {
-                    let data = &msg[1..];
+                    let data = &msg[9..];
                     if let Err(e) = file.write_all(data).await {
                         // tokio::io::AsyncWriteExt
                         tracing::error!("write chunk: {}", e);
@@ -1684,7 +1827,10 @@ pub async fn send_file_to_peer(path: String) -> Result<String, String> {
     Ok(summary)
 }
 
-async fn send_file_session(
+/// Stream one file over the File channel using the wire protocol above.
+/// Public for integration tests; app code goes through `send_file_to_peer`.
+#[flutter_rust_bridge::frb(ignore)]
+pub async fn send_file_session(
     mut transport: alldesk_net::transport::QuicTransport,
     path: &str,
     filename: &str,

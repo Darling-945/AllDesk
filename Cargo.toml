@@ -34,7 +34,7 @@ quinn = { version = "0.11", default-features = false, features = ["rustls", "run
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = "0.13"
 cpal = "0.17"
-libvpx-native-sys = "5"
+libvpx-native-sys = "5.0.17"
 arboard = "3.4"
 hostname = "0.4"
 flutter_rust_bridge = "2"

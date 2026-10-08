@@ -126,6 +126,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get remoteDisconnect => 'Disconnect';
 
   @override
+  String get remoteKeyboard => 'Keyboard';
+
+  @override
+  String get remoteInputHint => 'Type text to send to the remote…';
+
+  @override
   String get remoteStartRecording => 'Record Session';
 
   @override

@@ -16,7 +16,9 @@ set TARGET=%1
 if "%TARGET%"=="" set TARGET=windows
 
 if "%VPX_LIB_DIR%"=="" set VPX_LIB_DIR=C:\tmp\vpx-install\lib
-set VPX_VERSION=1.13.0
+REM Must match the libvpx runtime in VPX_LIB_DIR (see libvpx-native-sys
+REM pregenerated bindings; 1.14.0 bindings match a 1.14.x runtime).
+set VPX_VERSION=1.14.0
 set VPX_INCLUDE_DIR=C:\tmp\vpx-install\include
 set PATH=C:\Program Files\CMake\bin;%VPX_LIB_DIR%;%PATH%
 
@@ -52,25 +54,34 @@ exit /b 0
 
 :android_release
 set PATH=%JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools;%PATH%
+if "%ANDROID_NDK_HOME%"=="" set ANDROID_NDK_HOME=E:\AndroidSdk\ndk\28.2.13676358
+if "%ANDROID_HOME%"=="" set ANDROID_HOME=E:\AndroidSdk
 
 echo === [1/4] Building Rust FFI for Android (arm64, armv7, x86_64) ===
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 build --release -p alldesk-ffi
-if %ERRORLEVEL% neq 0 exit /b 1
-
-echo === [2/4] Copying .so to jniLibs ===
+REM Each ABI links its own statically cross-compiled libvpx (build with
+REM scripts\build-vpx-android.sh once per ABI; output in C:\tmp\vpx-android).
+set VPX_STATIC=1
+set VPX_VERSION=1.14.0
 set JNI_DIR=app\android\app\src\main\jniLibs
 if not exist "%JNI_DIR%\arm64-v8a" mkdir "%JNI_DIR%\arm64-v8a"
 if not exist "%JNI_DIR%\armeabi-v7a" mkdir "%JNI_DIR%\armeabi-v7a"
 if not exist "%JNI_DIR%\x86_64" mkdir "%JNI_DIR%\x86_64"
-copy /Y target\aarch64-linux-android\release\liballdesk_ffi.so "%JNI_DIR%\arm64-v8a\"
-copy /Y target\armv7-linux-androideabi\release\liballdesk_ffi.so "%JNI_DIR%\armeabi-v7a\"
-copy /Y target\x86_64-linux-android\release\liballdesk_ffi.so "%JNI_DIR%\x86_64\"
+for %%T in ("aarch64-linux-android:arm64-v8a" "armv7-linux-androideabi:armeabi-v7a" "x86_64-linux-android:x86_64") do (
+  for /f "tokens=1,2 delims=:" %%A in (%%T) do (
+    echo --- target %%A (%%B) ---
+    set VPX_LIB_DIR=C:\tmp\vpx-android\%%B\lib
+    set VPX_INCLUDE_DIR=C:\tmp\vpx-android\%%B\include
+    cargo ndk --platform 26 -t %%A build --release -p alldesk-ffi
+    if errorlevel 1 exit /b 1
+    copy /Y target\%%A\release\liballdesk_ffi.so "%JNI_DIR%\%%B\"
+  )
+)
 
-echo === [3/4] Generating Flutter-Rust bindings ===
+echo === [2/4] Generating Flutter-Rust bindings ===
 call flutter_rust_bridge_codegen generate
 if %ERRORLEVEL% neq 0 exit /b 1
 
-echo === [4/4] Building Flutter APK ===
+echo === [3/4] Building Flutter APK ===
 pushd app
 call flutter build apk --release
 if %ERRORLEVEL% neq 0 exit /b 1
@@ -83,19 +94,27 @@ exit /b 0
 
 :android_debug
 set PATH=%JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools;%PATH%
+if "%ANDROID_NDK_HOME%"=="" set ANDROID_NDK_HOME=E:\AndroidSdk\ndk\28.2.13676358
+if "%ANDROID_HOME%"=="" set ANDROID_HOME=E:\AndroidSdk
 
 echo === [1/4] Building Rust FFI for Android (debug) ===
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 build -p alldesk-ffi
-if %ERRORLEVEL% neq 0 exit /b 1
-
-echo === [2/4] Copying .so to jniLibs ===
+REM Per-ABI static libvpx, same as the release path above.
+set VPX_STATIC=1
+set VPX_VERSION=1.14.0
 set JNI_DIR=app\android\app\src\main\jniLibs
 if not exist "%JNI_DIR%\arm64-v8a" mkdir "%JNI_DIR%\arm64-v8a"
 if not exist "%JNI_DIR%\armeabi-v7a" mkdir "%JNI_DIR%\armeabi-v7a"
 if not exist "%JNI_DIR%\x86_64" mkdir "%JNI_DIR%\x86_64"
-copy /Y target\aarch64-linux-android\debug\liballdesk_ffi.so "%JNI_DIR%\arm64-v8a\"
-copy /Y target\armv7-linux-androideabi\debug\liballdesk_ffi.so "%JNI_DIR%\armeabi-v7a\"
-copy /Y target\x86_64-linux-android\debug\liballdesk_ffi.so "%JNI_DIR%\x86_64\"
+for %%T in ("aarch64-linux-android:arm64-v8a" "armv7-linux-androideabi:armeabi-v7a" "x86_64-linux-android:x86_64") do (
+  for /f "tokens=1,2 delims=:" %%A in (%%T) do (
+    echo --- target %%A ---
+    set VPX_LIB_DIR=C:\tmp\vpx-android\%%B\lib
+    set VPX_INCLUDE_DIR=C:\tmp\vpx-android\%%B\include
+    cargo ndk --platform 26 -t %%A build -p alldesk-ffi
+    if errorlevel 1 exit /b 1
+    copy /Y target\%%A\debug\liballdesk_ffi.so "%JNI_DIR%\%%B\"
+  )
+)
 
 echo === [3/4] Generating Flutter-Rust bindings ===
 call flutter_rust_bridge_codegen generate

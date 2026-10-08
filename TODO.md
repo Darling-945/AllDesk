@@ -14,11 +14,12 @@
 | **P1** | 带宽估计未接入发送管线 | [x] | 每秒采样 quinn RTT/丢包 → AIMD 自适应码率+帧率闭环（bwe.rs 延迟趋势估计器仍未使用） |
 | **P1** | 流控未在传输层使用 | [x] | SenderPipeline 接入 FlowController：背压时丢旧帧 |
 | **P2** | 连接质量未暴露到 Flutter UI | [x] | 每秒采样 RTT/丢包/带宽，get_connection_quality 输出真实指标 |
-| **P2** | macOS/Linux 屏幕捕获缺失 | [ ] | lib.rs 中已注释掉 quartz/x11/wayland 模块 |
+| **P2** | macOS 屏幕捕获 | [x] | QuartzCapturer: CGDisplayCreateImage 轮询 + TCC 权限预检 + Retina 像素坐标适配（Phase 35） |
+| **P2** | Linux 屏幕捕获 | [ ] | x11/wayland 模块缺失（x11rb 依赖已声明） |
 | **P2** | GPU 硬件加速编解码 | [ ] | 纯软件编解码，无 NVENC/QSV/VideoToolbox |
 | **P3** | 白板绘图控件 | 已移除 | crate 与占位 UI 已删除（git 历史可找回） |
-| **P3** | 录屏播放器 | [ ] | 会话录制已接入（VP9 直存 .aldrec），回放 UI 仍缺失 |
-| **P3** | 国际化 (i18n) | [ ] | 所有文案硬编码中文 |
+| **P3** | 录屏播放器 | [x] | RecordingPlayer + FFI 逐帧解码 + 录像列表/播放器页（Phase 30） |
+| **P3** | 国际化 (i18n) | [x] | gen-l10n + zh/en arb 双语言，全部页面接入（Phase 31） |
 
 ## 编译警告清理（25 个 warning → 0）
 
@@ -81,7 +82,37 @@
 
 ---
 
-## 本次优化完成项 (Phase 31+30+29+28+27+22+19+16+14+15+17+18+23+11+24+25+26)
+## 本次优化完成项 (Phase 35+34+33+32+31+30+29+28+27+22+19+16+14+15+17+18+23+11+24+25+26)
+
+### Phase 35: macOS 支持落地（捕获 + 输入 + 一键构建）✅
+目标: 项目搬到 M 系列 Mac 后一条命令得到可用产物。**所有新增 macOS Rust 代码已通过 `cargo check --target aarch64-apple-darwin` 在本机交叉验证**(ring/dart-sys/oslog 三个 C 依赖因需 Apple 编译器只能到真机构建, Rust 源全部过检)。
+- [x] **QuartzCapturer 屏幕捕获** — `CGDisplayCreateImage` 每次调用返回当前桌面(管线节拍为唯一限频器, 与 DXGI 契约一致; 天然无"静屏无首帧"问题); 复用型 BGRA 位图上下文(分辨率变化时才重建); 奇数宽高裁到偶数(VP9 要求); 显示器枚举主屏置首; TCC 权限预检(`CGPreflightScreenCaptureAccess`/`CGRequestScreenCapture`)未授权时给出明确指引; 已知限制: CGDisplayCreateImage 不含系统光标, `cursor` 恒 None(ScreenCaptureKit 可后续补)
+- [x] **Retina 输入坐标适配** — 帧是背板像素(2x), CGEvent 鼠标坐标是全局点坐标; api.rs 新增 PointScaledController 适配器(原点偏移 + 缩放换算后委托 MacInputController)
+- [x] **macos.rs 输入编译修复** — core-graphics 0.24 的 KeyCode 并无 ANSI_* 打印键常量(此前从未编译过, 47 处引用全错); 补齐标准 HID 虚拟键码表(0x00-0x32), 特殊键仍用 crate 常量
+- [x] **scripts/build-macos.sh 一键脚本** — 检查/安装 Xcode CLT、Homebrew、Rust、Flutter、flutter_rust_bridge_codegen 2.12.0; 下载并静态编译 libvpx 1.14.1(默认 arm64, `--universal` 加 x86_64 lipo 合一); 跑 FRB codegen(frb_generated.rs 被 gitignore, 新机必需); cargo 构建 + `flutter create --platforms=macos`(仓库原本没有 macos 平台目录) + `flutter build macos`; 把 liballdesk_ffi.dylib 拷进 .app/Contents/MacOS 并 ad-hoc 重签名; 末尾打印屏幕录制/辅助功能授权指引。bash 3.2 兼容(无空数组展开)
+- [x] **测试平台门控** — first_frame.rs 的 dxgi import 移入 cfg(windows) 测试内; loopback 视频测试 cfg(windows)(避免 mac 上 cargo test 弹 TCC 授权窗), 文件传输测试保持跨平台
+
+### Phase 34: Android 视频管线落地 + 文件传输数据损坏修复 ✅
+审计发现 **Android 端从未包含视频功能**: jniLibs 里的 liballdesk_ffi.so 是 4/21 的旧构建(内无 alldesk-codec/alldesk-capture/watch_video 任何符号, 甚至晚至 5/9 的 target 产物同样没有) — Android 侧 VP9 依赖的 libvpx 从未交叉编译过, vpx 相关 Android 构建全部静默失败。
+- [x] **libvpx 1.14.1 Android 三架构交叉编译** — 新增 `scripts/build-vpx-android.sh`(Git Bash + NDK r28 clang + 原生 GNU make; 相对路径调 configure 规避原生 make 无法解析 MSYS 路径、强制 SHELL=sh.exe 执行 POSIX recipe、armv7 的 %.S.o 规则补 `-c` 防误链接、x86_64 用便携 nasm)。产出 `C:\tmp\vpx-android\{arm64-v8a,armeabi-v7a,x86_64}\lib\libvpx.a`(NEON 全开, readelf 校验架构正确)
+- [x] **Android 构建链修复** — Rust Android targets 重装; build.bat/build.sh 的 android 分支改为逐 ABI 设置 `VPX_LIB_DIR/VPX_STATIC=1`(三个 ABI 各自静态链接自己的 libvpx.a); NDK 路径默认值更新为实际安装位置(r28)
+- [x] **文件传输真实数据损坏 bug 修复** — 新增文件传输端到端集成测试(真实 QUIC + 生产收发代码路径)立即抓到: 接收端把每条 chunk 消息的 8 字节块索引前缀也写进文件(`&msg[1..]` 应为 `&msg[9..]`), **每个 64KB 分块污染 8 字节, 收到的文件全部损坏**。已修复并被测试守护(700KB 逐字节比对通过)
+- [x] **接收目录可配置** — `ALLDESK_RECEIVED_FILES_DIR` 环境变量覆盖默认的 `~/Downloads/AllDesk`(测试隔离 + 用户自定义)
+- [x] **Kotlin isScreenCaptureGranted** — MainActivity 方法通道补齐(ScreenCaptureService.isRunning 静态标志), Android 权限引导页状态不再恒为"未授权"
+
+### Phase 33: "连接后无画面"根因修复 ✅
+实测发现"设备能发现、连接后一直无画面"。新增**端到端回环集成测试**(本机真实 QUIC+DXGI+VP9 全链路,`ffi/tests/loopback.rs`)复现并锁定两个根因:
+- [x] **根因1: 静止桌面无首帧** — Win11 上 DXGI `AcquireNextFrame` 不返回当前画面(只等"变化"),重建 duplication 也无效(实测 10 秒 0 帧/92 次超时)。被控端桌面安静时观察端永远看不到画面。修复:首次产出帧前,超时即用 **GDI BitBlt 一次性兜底**抓当前桌面(BitBlt 永远返回当前内容),之后 DXGI 接管增量。新增 `capture/tests/first_frame.rs` 静屏首帧测试(实测 0 超时出帧)
+- [x] **根因2: libvpx 版本不匹配** — 本机 libvpx-1.dll 是 v1.14.1,而 libvpx-native-sys 5.0.13 绑定按 1.13.0 结构体编译 → `enc_init_ver` 返回 INVALID_PARAM(3),VP9 编码器从未创建成功(此前被 raw 回退掩盖)。修复:升级 libvpx-native-sys → 5.0.17(带 1.14.0 预生成绑定)+ `VPX_VERSION=1.14.0`(build.bat/sh 同步);新增运行时版本探针测试(打印 DLL 版本并逐步定位失败调用)
+- [x] **恢复本机构建链** — `C:\tmp\vpx-install\lib` 曾被清空(vpx.lib 丢失,导致 4 月后所有构建失败、只能跑旧二进制)。从存活的 `libvpx-1.dll`(dumpbin 导出表 → .def → lib.exe)重建导入库;alldesk-ffi 增加 rlib crate-type 使集成测试可链接。**至此本机可完整构建 Windows 版,且 323 个测试首次全部本地可跑**(此前 codec/ffi 测试无法链接)
+
+### Phase 32: 键盘接入 + 键表补全 + 视频稳定性 ✅
+- [x] **键盘接入 UI** — 远程页 Focus(onKeyEvent) 转发硬件键盘（连接后自动获焦、点击画面重新获焦）；移动端工具栏键盘按钮弹出软键盘输入条（增量字符 + 退格 + 回车转发）
+- [x] **键表补全** — KeyCode/协议表/VK 映射新增 Ctrl/Alt/Shift/Win 左右修饰键、Space/Home/End/PgUp/PgDn/Insert/PrintScreen/Pause/CapsLock/NumLock/ScrollLock/Menu；新增 key_type="vk" 原始虚拟键透传通道（修饰键组合如 Ctrl+C 走真实 VK 而非文本字符）；macOS 映射同步（含左右修饰键 CGKeyCode，常量名已对照 core-graphics 0.24 源码核实）
+- [x] **Dart 键映射服务** — key_mapping.dart 与 Rust decode_special_key 表一一对应（F1-F24 显式映射）；组合键路径用 HardwareKeyboard 修饰符状态判定
+- [x] **分辨率变化处理** — SenderPipeline 检测帧尺寸与编码器脱节即重建编码器（新编码器自动出关键帧，接收端立即重同步）并同步重建 flow 上限（raw 回退帧不再被静默丢弃）
+- [x] **raw 回退治理** — 编码连续失败 30 次（~1 秒）后重建编码器，不再无限期发 8MB/帧的原始 BGRA
+- [x] **剪贴板内存** — ClipboardMonitor 移除只写不读的 last_content 缓存（大图不再常驻内存；Android 侧缓存有真实用途保留）
 
 ### Phase 31: i18n + 聊天 + 权限引导 ✅
 - [x] **国际化 (i18n)** — flutter gen-l10n + arb 双语言(中文模板 + English,~90 键);MaterialApp 接入 localizationsDelegates/supportedLocales,语言跟随系统;全部页面(首页/远程/文件传输/录像/播放器/设置/聊天/权限)字符串改经 AppLocalizations;启动错误提示按当前语言构建;测试改为本地化 pump + zh/en 覆盖断言
@@ -209,7 +240,7 @@
 
 ### Phase 13: 跨平台捕获 & 输入
 
-- [ ] **macOS 屏幕捕获** — CoreGraphics/ScreenCaptureKit 实现 (capture/quartz.rs 模块缺失)
+- [x] **macOS 屏幕捕获** — QuartzCapturer (CGDisplayCreateImage 轮询, 见 Phase 35)
 - [ ] **Linux 屏幕捕获** — X11 + Wayland 后端 (capture/x11.rs / wayland.rs 模块缺失)
 - [ ] **macOS 输入注入** — CoreGraphics CGEvent (input/quartz.rs 已有代码但未编译验证)
 - [ ] **Linux 输入注入** — uinput / XTest 扩展
@@ -324,14 +355,16 @@
   - alldesk-core: 18 tests ✅ (config + adaptive 控制器 / 丢包率跟踪器)
   - alldesk-net: 73 + 7 integration tests ✅ (Channel, QUIC, discovery, reconnect, ICE, flow, BWE, TLS pin, E2E crypto, latency)
   - alldesk-files: 45 tests ✅ (含CRC32校验 + manifest + 文件验证)
-  - alldesk-platform: 57 tests ✅ (audio/clipboard/input 合并后，含序列号稳定性测试)
+  - alldesk-platform: 59 tests ✅ (audio/clipboard/input 合并后，含序列号稳定性 + 导航键/修饰键 VK 映射测试)
   - alldesk-recording: 19 tests ✅ (write/read roundtrip + RecordingPlayer 顺序读取/回绕/音频区隔离)
-  - alldesk-capture: 6 tests ✅ (config, pixel format, cursor)
+  - alldesk-capture: 6 tests ✅ (config, pixel format, cursor)（另有静屏首帧测试在 tests/first_frame.rs）
   - server: 52 tests ✅ (registry, signaling, STUN IPv6, config, auth, metrics, bandwidth, TURN)
-  - alldesk-codec: 10 tests（编译通过；本机缺 vpx.lib 无法链接测试二进制，CI 可跑）
-  - **Total: 277 tests, all passing locally**
-- [x] **Flutter 测试** — 54个测试覆盖主题/设置Provider/发现Provider/文件传输页面/录像页面/路由/ConnectionStore(7个)/本地化(zh+en+参数化消息)
-- [ ] **集成测试** — QUIC集成测试已有(7个)，缺文件传输端到端测试
+  - alldesk-codec: 27 tests ✅（编码/解码往返 + vpx 运行时版本探针；需 PATH 中有 libvpx-1.dll）
+  - alldesk-ffi: 15 单元测试 + **端到端回环集成测试×2**（真实 QUIC+DXGI+VP9 全链路"连接后无画面"级回归守卫；文件传输全链路逐字节校验——上线即抓到分块索引污染 bug）✅
+  - alldesk-capture: 7 tests ✅（含静屏首帧 GDI 兜底测试）
+  - **Total: 324 tests, all passing locally**（libvpx 导入库已从运行时 DLL 重建，codec/ffi 测试首次可本地运行；Android 三架构自 Phase 34 起同样可构建）
+- [x] **Flutter 测试** — 63个测试覆盖主题/设置Provider/发现Provider/文件传输页面/录像页面/路由/ConnectionStore(7个)/本地化(zh+en+参数化消息)/键映射(9个:控制键/修饰键左右独立/F键块/组合VK/可打印判定)
+- [x] **集成测试** — QUIC 集成测试(7个) + 端到端回环视频测试 + 文件传输端到端测试(真实 QUIC 全链路, 逐字节校验)
 - [ ] **性能基准** — 无编解码/网络/捕获性能 benchmark
 - [ ] **跨平台构建验证** — macOS/Linux 构建脚本缺失
 - [x] **Android 设备测试** — 调试APK已构建/安装/运行于 PLC110 (Android 16 API 36)

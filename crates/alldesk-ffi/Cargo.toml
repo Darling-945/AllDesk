@@ -5,7 +5,8 @@ edition.workspace = true
 
 [lib]
 name = "alldesk_ffi"
-crate-type = ["cdylib", "staticlib"]
+# rlib lets integration tests link the crate; the cdylib is what Flutter loads.
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 alldesk-core = { path = "../alldesk-core" }
@@ -25,3 +26,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 hostname = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Display bounds + backing pixel size for the input pixel->point adapter.
+core-graphics = "0.24"

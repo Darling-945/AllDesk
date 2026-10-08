@@ -40,6 +40,8 @@
   "remoteFileTransfer": "File Transfer",
   "remoteChat": "Chat",
   "remoteDisconnect": "Disconnect",
+  "remoteKeyboard": "Keyboard",
+  "remoteInputHint": "Type text to send to the remote…",
   "remoteStartRecording": "Record Session",
   "remoteStopRecording": "Stop Recording",
   "remoteRecordingDone": "Recording saved: {summary}",

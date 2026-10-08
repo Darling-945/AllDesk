@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 屏幕捕获与实时传输（Windows DXGI；Android MediaProjection；macOS/Linux 后端待实现）
+- 屏幕捕获与实时传输（Windows DXGI；Android MediaProjection；macOS CoreGraphics）
 - 视频编解码（VP9 软编软解，RTT/丢包驱动的自适应码率与帧率）
 - 音频采集与播放（cpal，PCM 直传）
 - 键鼠控制（平台原生 API 注入）
@@ -37,7 +37,7 @@
 | 目录 | 说明 |
 |------|------|
 | `crates/alldesk-core` | 共享错误类型、配置、自适应码率/帧率控制策略 |
-| `crates/alldesk-capture` | 屏幕捕获（Windows DXGI / Android MediaProjection） |
+| `crates/alldesk-capture` | 屏幕捕获（Windows DXGI / Android MediaProjection / macOS CoreGraphics） |
 | `crates/alldesk-platform` | 本机外设集成：音频采集/播放 + 剪贴板 + 键鼠注入 |
 | `crates/alldesk-codec` | 视频编解码（VP9） |
 | `crates/alldesk-net` | 网络层（QUIC P2P + 流控 + 重连 + mDNS；中继/STUN/ICE/TURN 在 `server/`） |
@@ -84,6 +84,17 @@ cd app && flutter run -d windows
 # Windows 发布构建
 cd app && flutter build windows --release
 ```
+
+### macOS 一键构建（Apple Silicon）
+
+```bash
+# 自动安装缺失依赖(Xcode CLT/Homebrew/Rust/Flutter/CocoaPods/codegen CLI)，
+# 静态编译 libvpx 1.14.1，生成 FRB 绑定并产出 AllDesk.app
+bash scripts/build-macos.sh              # arm64 release
+bash scripts/build-macos.sh --universal  # 附带 x86_64 切片(Intel)
+```
+
+首次远控前需在 系统设置 > 隐私与安全性 授予 屏幕录制 与 辅助功能 权限（授予屏幕录制后需重启应用）。
 
 ### Android 交叉编译
 

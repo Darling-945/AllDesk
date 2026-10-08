@@ -6,9 +6,10 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `app_state`, `chat_sender_lock`, `chat_tx_lock`, `current_recorder`, `decode_special_key`, `ensure_peer_id`, `frame_rx_lock`, `frame_tx_lock`, `handle_key_event`, `handle_mouse_event`, `handle_scroll_event`, `input_transport_lock`, `install_viewer_session`, `local_ip_addresses`, `playback_lock`, `received_files_dir`, `record_pipeline_error`, `recorder_lock`, `run_adaptive_controller`, `run_file_receiver`, `run_input_handler`, `run_quality_sampler`, `sanitize_remote_filename`, `send_file_session`, `start_server_internal`, `supervise_connection`
+// These functions are ignored because they are not marked as `pub`: `app_state`, `chat_sender_lock`, `chat_tx_lock`, `current_recorder`, `decode_special_key`, `ensure_peer_id`, `frame_rx_lock`, `frame_tx_lock`, `handle_key_event`, `handle_mouse_event`, `handle_scroll_event`, `input_transport_lock`, `install_viewer_session`, `local_ip_addresses`, `playback_lock`, `received_files_dir`, `record_pipeline_error`, `recorder_lock`, `run_adaptive_controller`, `run_input_handler`, `run_quality_sampler`, `sanitize_remote_filename`, `start_server_internal`, `supervise_connection`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AppState`, `CachedPeer`, `ClientState`, `RecordingPlayback`, `ServerState`, `SessionState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `run_file_receiver`, `send_file_session`
 
 /// Get the library version
 Future<String> getVersion() => RustLib.instance.api.crateApiGetVersion();
@@ -90,9 +91,18 @@ Future<void> sendScroll({required double dy}) =>
     RustLib.instance.api.crateApiSendScroll(dy: dy);
 
 /// Send a key event to the remote peer (viewer side).
-/// For char keys: key_type="char", key is the unicode codepoint.
-/// For special keys: key_type="special", key is the special key code.
 /// pressed: true = key down, false = key up.
+///
+/// - key_type="char": `key` is a Unicode codepoint (injected as text;
+///   releases are implicit — the host sends its own down+up pair).
+/// - key_type="special": `key` is a code from the shared table in
+///   [`decode_special_key`] (0x01-0x09 Enter/Esc/Tab/Backspace/Delete/
+///   arrows, 0x10-0x27 F1-F24, 0x30+ navigation keys, 0x40-0x47 the
+///   left/right Ctrl/Shift/Alt/Meta modifiers). Keep the Dart table in
+///   app/lib/services/key_mapping.dart in sync.
+/// - key_type="vk": `key` is a raw Windows virtual-key code, injected
+///   as-is — used for modifier combos (Ctrl+C etc.) where a char event
+///   would be wrong.
 Future<void> sendKeyEvent(
         {required String keyType, required int key, required bool pressed}) =>
     RustLib.instance.api

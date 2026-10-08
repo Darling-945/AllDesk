@@ -8,7 +8,8 @@ cfg_if::cfg_if! {
         pub mod android;
         pub use android::AndroidCapturer;
     } else if #[cfg(target_os = "macos")] {
-        // pub mod quartz;
+        pub mod quartz;
+        pub use quartz::QuartzCapturer;
     } else if #[cfg(target_os = "linux")] {
         // pub mod x11;
         // pub mod wayland;
