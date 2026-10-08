@@ -6,7 +6,7 @@
 |--------|------|------|------|
 | **P0** | 音频实时流未接入 QUIC 管线 | [x] | AudioSenderPipeline + AudioReceiverPipeline 已桥接到 QUIC Audio 通道 |
 | **P0** | 剪贴板同步未接入 QUIC 通道 | [x] | ClipboardPipeline 双向同步已桥接到 QUIC Clipboard 通道 |
-| **P0** | Windows↔Android 连接和画面显示 | [x] | ReceiverPipeline 增加超时、状态追踪、增强日志 |
+| **P0** | Windows↔Android 连接和画面显示 | [x] | ReceiverPipeline 超时/状态追踪/增强日志；**Android 端视频管线实际自 Phase 34 才存在**（此前 jniLibs 为无 codec 的 4 月旧 .so，libvpx 从未为 Android 交叉编译过） |
 | **P1** | 文件传输未接入 FFI 和 Flutter UI | [x] | File 通道管线 + FFI + Flutter 文件选择/进度页 |
 | **P1** | P2P 打洞（ICE）未接入连接流程 | [ ] | IceAgent 已实现，ffi/api.rs 仅直连，无打洞逻辑 |
 | **P1** | 自动重连未接入 FFI | [x] | 断线后 supervisor 自动重建会话（退避重试 + 代数防陈旧） |
@@ -226,15 +226,16 @@
 
 ## 待实现
 
-### Phase 11: Android 支持（进行中）
-- [x] Android 项目结构 + 构建脚本 (build_android.sh/bat, Gradle, AndroidManifest)
+### Phase 11: Android 支持 ✅
+- [x] Android 项目结构 + 构建脚本 (build.bat/build.sh android 分支, Gradle, AndroidManifest)
 - [x] MediaProjection 屏幕捕获服务 (ScreenCaptureService.kt)
 - [x] AccessibilityService 输入服务骨架 (AccessibilityInputService.kt)
-- [x] Flutter 平台通道 (MethodChannel/EventChannel)
+- [x] Flutter 平台通道 (MethodChannel/EventChannel, 含 isScreenCaptureGranted)
 - [x] Rust Android capturer (alldesk-capture/android.rs)
 - [x] FFI 导出 `push_android_frame()` 缺少 `#[frb(sync)]` 注解
 - [x] 输入注入实现 (alldesk-input/android.rs 当前是空壳)
 - [x] JNI 绑定 (Rust ↔ Android Services 的桥接)
+- [x] **视频管线落地 (Phase 34)** — 此前 jniLibs 的 .so 是 4 月旧构建(无 codec/capture/FFI 符号); libvpx 三架构交叉编译 + 逐 ABI 静态链接后重建成真; minSdk 24→26 (cpal aaudio)
 
 ---
 
@@ -242,7 +243,7 @@
 
 - [x] **macOS 屏幕捕获** — QuartzCapturer (CGDisplayCreateImage 轮询, 见 Phase 35)
 - [ ] **Linux 屏幕捕获** — X11 + Wayland 后端 (capture/x11.rs / wayland.rs 模块缺失)
-- [ ] **macOS 输入注入** — CoreGraphics CGEvent (input/quartz.rs 已有代码但未编译验证)
+- [x] **macOS 输入注入** — MacInputController (CoreGraphics CGEvent)；Phase 35 修复 47 处不存在的 ANSI_* 常量引用并补齐标准 HID 键码表，已过 aarch64-apple-darwin 编译检查；Retina 像素→点坐标适配 (PointScaledController)
 - [ ] **Linux 输入注入** — uinput / XTest 扩展
 - [x] **多显示器坐标映射** — get_displays() + map_to_display() 已实现
 - [x] **光标捕获** — DXGI GetFramePointerShape 提取光标图像和位置 (CursorInfo/CursorShapeType)
@@ -366,7 +367,7 @@
 - [x] **Flutter 测试** — 63个测试覆盖主题/设置Provider/发现Provider/文件传输页面/录像页面/路由/ConnectionStore(7个)/本地化(zh+en+参数化消息)/键映射(9个:控制键/修饰键左右独立/F键块/组合VK/可打印判定)
 - [x] **集成测试** — QUIC 集成测试(7个) + 端到端回环视频测试 + 文件传输端到端测试(真实 QUIC 全链路, 逐字节校验)
 - [ ] **性能基准** — 无编解码/网络/捕获性能 benchmark
-- [ ] **跨平台构建验证** — macOS/Linux 构建脚本缺失
+- [x] **跨平台构建验证** — macOS: `scripts/build-macos.sh` 一键(依赖/libvpx/FRB/打包/签名) + `cargo check --target aarch64-apple-darwin` 过检；Linux 构建脚本仍缺
 - [x] **Android 设备测试** — 调试APK已构建/安装/运行于 PLC110 (Android 16 API 36)
 
 ---

@@ -47,7 +47,7 @@ cd app && flutter build apk --release
   - `alldesk-core` — 共享错误类型、配置
   - `alldesk-capture` — 屏幕捕获（DXGI/CoreGraphics/X11/Wayland/MediaProjection）
   - `alldesk-platform` — 本机外设集成：音频采集/播放 + 剪贴板 + 键鼠注入
-  - `alldesk-codec` — 视频编解码（VP9/H.264/AV1）
+  - `alldesk-codec` — 视频编解码（VP9，libvpx 1.14.x）
   - `alldesk-net` — 网络层（QUIC P2P + 中继 + STUN + mDNS 发现）
   - `alldesk-files` — 文件传输（分块、断点续传）
   - `alldesk-recording` — 录屏（WebM 封装）
@@ -59,7 +59,7 @@ cd app && flutter build apk --release
 
 ```
 Screen Capture → Video Encoder → QUIC Transport → Video Decoder → Flutter Texture
-Audio Capture  → Opus Encoder  → QUIC Datagram  → Opus Decoder  → Audio Player
+Audio Capture  → PCM           → QUIC Datagram  → PCM          → Audio Player
 Flutter Input  → FFI → Input Controller (OS injection)
 ```
 
@@ -101,8 +101,8 @@ FRB 配置在 `app/pubspec.yaml` 的 `flutter_rust_bridge:` 段。
 | 用途 | Crate |
 |------|-------|
 | QUIC | quinn 0.11 |
-| Protobuf | prost + prost-build |
-| Flutter 桥接 | flutter_rust_bridge 2 |
+| 视频编解码 | libvpx-native-sys 5.0.17（运行时需 1.14.x，VPX_VERSION=1.14.0） |
+| Flutter 桥接 | flutter_rust_bridge 2.12（codegen 同版本） |
 | 音频 I/O | cpal 0.17 |
 | 剪贴板 | arboard 3.4 |
 | 状态管理 | flutter_riverpod |
